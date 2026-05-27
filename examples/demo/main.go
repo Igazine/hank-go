@@ -12,8 +12,8 @@ import (
 
 func main() {
 	cwd, _ := os.Getwd()
-	// Submodule is at vendor/hal relative to the runner project root
-	root := filepath.Join(cwd, "../../vendor/hal")
+	// Submodule is at vendor/hal relative to the hal-go project root
+	root := filepath.Join(cwd, "vendor/hal")
 	
 	if len(os.Args) < 2 {
 		runConformance(root)
