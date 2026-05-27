@@ -480,8 +480,8 @@ func ValueToString(v Value) string {
 	case TypeTask:
 		return "[Task]"
 	case TypeVoid:
-		return "null"
+		return "Void"
 	default:
-		return "null"
+		return "Void"
 	}
 }
