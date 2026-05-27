@@ -8,6 +8,45 @@ import (
 	"strings"
 )
 
+func halEquals(a, b Value) bool {
+	if a.Type != b.Type {
+		return false
+	}
+	switch a.Type {
+	case TypeVoid:
+		return true
+	case TypeNumber:
+		return a.Number == b.Number
+	case TypeString:
+		return a.String == b.String
+	case TypeArray:
+		if len(a.Array) != len(b.Array) {
+			return false
+		}
+		for i := range a.Array {
+			if !halEquals(a.Array[i], b.Array[i]) {
+				return false
+			}
+		}
+		return true
+	case TypeObject:
+		if len(a.Object) != len(b.Object) {
+			return false
+		}
+		for k, v1 := range a.Object {
+			v2, ok := b.Object[k]
+			if !ok || !halEquals(v1, v2) {
+				return false
+			}
+		}
+		return true
+	case TypeOpaque:
+		return a.Opaque.Label == b.Opaque.Label && a.Opaque.Data == b.Opaque.Data
+	default:
+		return false
+	}
+}
+
 func GetStdlibModules() map[string]map[string]NativeFunc {
 	mods := make(map[string]map[string]NativeFunc)
 
@@ -210,7 +249,7 @@ func GetStdlibModules() map[string]map[string]NativeFunc {
 			if len(args) < 2 {
 				return Value{Type: TypeVoid}
 			}
-			if ValueToString(args[0]) == ValueToString(args[1]) {
+			if halEquals(args[0], args[1]) {
 				return Value{Type: TypeNumber, Number: 1}
 			}
 			return Value{Type: TypeVoid}
@@ -236,6 +275,15 @@ func GetStdlibModules() map[string]map[string]NativeFunc {
 				if a.Type != TypeVoid {
 					return a
 				}
+			}
+			return Value{Type: TypeVoid}
+		},
+		"eq": func(args []Value, ctx ExecutionContext) Value {
+			if len(args) < 2 {
+				return Value{Type: TypeVoid}
+			}
+			if halEquals(args[0], args[1]) {
+				return Value{Type: TypeNumber, Number: 1}
 			}
 			return Value{Type: TypeVoid}
 		},
