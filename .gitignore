@@ -1,0 +1,6 @@
+/bin/
+/vendor/
+!.gitmodules
+.DS_Store
+*.exe
+*.test
