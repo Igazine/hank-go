@@ -4,13 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"regexp"
-	"runtime"
 	"strings"
 )
 
-func (r *Runner) RegisterStd() {
+func RegisterStdlib(r interface {
+	RegisterModule(string, map[string]NativeFunc)
+}) {
 	r.RegisterModule("log", map[string]NativeFunc{
 		"print": func(args []Value, ctx ExecutionContext) Value {
 			var strs []string
@@ -250,103 +250,6 @@ func (r *Runner) RegisterStd() {
 			b, err := json.Marshal(any)
 			if err != nil { return Value{Type: TypeVoid} }
 			return Value{Type: TypeString, String: string(b)}
-		},
-	})
-
-	r.RegisterModule("os", map[string]NativeFunc{
-		"type": func(args []Value, ctx ExecutionContext) Value {
-			return Value{Type: TypeString, String: runtime.GOOS}
-		},
-		"name": func(args []Value, ctx ExecutionContext) Value {
-			return Value{Type: TypeString, String: runtime.GOOS}
-		},
-		"arch": func(args []Value, ctx ExecutionContext) Value {
-			return Value{Type: TypeString, String: runtime.GOARCH}
-		},
-		"memory": func(args []Value, ctx ExecutionContext) Value {
-			obj := make(map[string]Value)
-			obj["total"] = Value{Type: TypeNumber, Number: 1024}
-			obj["free"] = Value{Type: TypeNumber, Number: 512}
-			obj["used"] = Value{Type: TypeNumber, Number: 512}
-			return Value{Type: TypeObject, Object: obj}
-		},
-		"cpu": func(args []Value, ctx ExecutionContext) Value {
-			return Value{Type: TypeNumber, Number: 0}
-		},
-	})
-
-	r.RegisterModule("host", map[string]NativeFunc{
-		"cwd": func(args []Value, ctx ExecutionContext) Value {
-			cwd, _ := os.Getwd()
-			return Value{Type: TypeString, String: cwd}
-		},
-		"pid": func(args []Value, ctx ExecutionContext) Value {
-			return Value{Type: TypeNumber, Number: float64(os.Getpid())}
-		},
-		"isRoot": func(args []Value, ctx ExecutionContext) Value {
-			if os.Getuid() == 0 { return Value{Type: TypeNumber, Number: 1} }
-			return Value{Type: TypeVoid}
-		},
-		"signal": func(args []Value, ctx ExecutionContext) Value {
-			if len(args) > 0 { fmt.Printf("[SIGNAL] %v\n", ValueToString(args[0])) }
-			return Value{Type: TypeVoid}
-		},
-	})
-
-	r.RegisterModule("fs", map[string]NativeFunc{
-		"exists": func(args []Value, ctx ExecutionContext) Value {
-			if len(args) == 0 { return Value{Type: TypeVoid} }
-			if _, err := os.Stat(ValueToString(args[0])); err == nil { return Value{Type: TypeNumber, Number: 1} }
-			return Value{Type: TypeVoid}
-		},
-		"read": func(args []Value, ctx ExecutionContext) Value {
-			if len(args) == 0 { return Value{Type: TypeVoid} }
-			b, err := os.ReadFile(ValueToString(args[0]))
-			if err != nil { return Value{Type: TypeVoid} }
-			return Value{Type: TypeString, String: string(b)}
-		},
-		"write": func(args []Value, ctx ExecutionContext) Value {
-			if len(args) < 2 { return Value{Type: TypeVoid} }
-			if err := os.WriteFile(ValueToString(args[0]), []byte(ValueToString(args[1])), 0644); err == nil { return Value{Type: TypeNumber, Number: 1} }
-			return Value{Type: TypeVoid}
-		},
-		"deleteFile": func(args []Value, ctx ExecutionContext) Value {
-			if len(args) == 0 { return Value{Type: TypeVoid} }
-			if err := os.Remove(ValueToString(args[0])); err == nil { return Value{Type: TypeNumber, Number: 1} }
-			return Value{Type: TypeVoid}
-		},
-		"stat": func(args []Value, ctx ExecutionContext) Value {
-			if len(args) == 0 { return Value{Type: TypeVoid} }
-			info, err := os.Stat(ValueToString(args[0]))
-			if err != nil { return Value{Type: TypeVoid} }
-			obj := make(map[string]Value)
-			obj["size"] = Value{Type: TypeNumber, Number: float64(info.Size())}
-			obj["mtime"] = Value{Type: TypeNumber, Number: float64(info.ModTime().UnixMilli())}
-			obj["isDir"] = Value{Type: TypeVoid}
-			if info.IsDir() { obj["isDir"] = Value{Type: TypeNumber, Number: 1} }
-			return Value{Type: TypeObject, Object: obj}
-		},
-	})
-
-	r.RegisterModule("proc", map[string]NativeFunc{
-		"run": func(args []Value, ctx ExecutionContext) Value {
-			if len(args) == 0 { return Value{Type: TypeVoid} }
-			cmdName := ValueToString(args[0])
-			var cmdArgs []string
-			if len(args) > 1 && args[1].Type == TypeArray {
-				for _, a := range args[1].Array { cmdArgs = append(cmdArgs, ValueToString(a)) }
-			}
-			cmd := exec.Command(cmdName, cmdArgs...)
-			out, err := cmd.CombinedOutput()
-			code := 0
-			if err != nil {
-				if exitErr, ok := err.(*exec.ExitError); ok { code = exitErr.ExitCode() } else { code = 1 }
-			}
-			res := make(map[string]Value)
-			res["code"] = Value{Type: TypeNumber, Number: float64(code)}
-			res["stdout"] = Value{Type: TypeString, String: string(out)}
-			res["stderr"] = Value{Type: TypeString, String: ""}
-			return Value{Type: TypeObject, Object: res}
 		},
 	})
 }
