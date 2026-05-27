@@ -16,6 +16,23 @@ go get github.com/Igazine/hal-go
 - **High Performance**: Pure Go implementation optimized for orchestration tasks.
 - **Embedded Examples**: Includes a reference runner implementation.
 
+## Testing & Examples
+
+An example CLI runner is included in `examples/runner`. Note that the runner requires the universal conformance suite located in the `hal` submodule.
+
+To fetch submodules after cloning:
+
+```bash
+git submodule update --init --recursive
+```
+
+To run the conformance tests:
+
+```bash
+cd examples/runner
+go run main.go
+```
+
 ## Project Links
 
 - **HAL Core Repo**: [Igazine/hal](https://github.com/Igazine/hal)
