@@ -1,3 +1,3 @@
-module github.com/Igazine/hal-go
+module github.com/Igazine/hank-go
 
 go 1.21

@@ -1,4 +1,4 @@
-package hal
+package hank
 
 import (
 	"fmt"
@@ -426,7 +426,7 @@ func (p *Parser) parseInclude() (Expr, error) {
 	}
 
 	base := filepath.Base(rawPath)
-	taskName := strings.TrimSuffix(base, ".hal")
+	taskName := strings.TrimSuffix(base, ".hank")
 
 	subLexer := NewLexer(content)
 	subTokens := subLexer.Tokenize()

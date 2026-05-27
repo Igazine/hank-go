@@ -2,12 +2,12 @@
 
 A Go implementation of the Hybrid Automation Language (HAL).
 
-This repository provides a reusable Go package (`github.com/Igazine/hal-go`) for embedding the HAL interpreter and runner into any Go application.
+This repository provides a reusable Go package (`github.com/Igazine/hank-go`) for embedding the HAL interpreter and runner into any Go application.
 
 ## Installation
 
 ```bash
-go get github.com/Igazine/hal-go
+go get github.com/Igazine/hank-go
 ```
 
 ## Features

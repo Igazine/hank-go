@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"github.com/Igazine/hal-go"
+	"github.com/Igazine/hank-go"
 	"os"
 	"os/exec"
 	"path/filepath"

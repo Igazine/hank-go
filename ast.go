@@ -1,4 +1,4 @@
-package hal
+package hank
 
 type Expr interface {
 	isExpr()

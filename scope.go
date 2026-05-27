@@ -1,4 +1,4 @@
-package hal
+package hank
 
 type scopeImpl struct {
 	values map[string]Value
