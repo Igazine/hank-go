@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -143,6 +144,104 @@ func GetStdlibModules() map[string]map[string]NativeFunc {
 				return Value{Type: TypeVoid}
 			}
 			return Value{Type: TypeString, String: strings.TrimSpace(ValueToString(args[0]))}
+		},
+	}
+
+	mods["num"] = map[string]NativeFunc{
+		"parse": func(args []Value, ctx ExecutionContext) Value {
+			if len(args) == 0 {
+				return Value{Type: TypeVoid}
+			}
+			s := ValueToString(args[0])
+			base := 0
+			if len(args) > 1 && args[1].Type == TypeNumber {
+				base = int(args[1].Number)
+			}
+			val, err := strconv.ParseInt(s, base, 64)
+			if err != nil {
+				// Try parsing as float if base is 0 or 10
+				if base == 0 || base == 10 {
+					fval, err := strconv.ParseFloat(s, 64)
+					if err == nil {
+						return Value{Type: TypeNumber, Number: fval}
+					}
+				}
+				return Value{Type: TypeVoid}
+			}
+			return Value{Type: TypeNumber, Number: float64(val)}
+		},
+		"format": func(args []Value, ctx ExecutionContext) Value {
+			if len(args) == 0 || args[0].Type != TypeNumber {
+				return Value{Type: TypeVoid}
+			}
+			n := int64(args[0].Number)
+			base := 10
+			if len(args) > 1 && args[1].Type == TypeNumber {
+				base = int(args[1].Number)
+			}
+			if base < 2 || base > 36 {
+				return Value{Type: TypeVoid}
+			}
+			return Value{Type: TypeString, String: strconv.FormatInt(n, base)}
+		},
+		"bitAnd": func(args []Value, ctx ExecutionContext) Value {
+			var a, b int64
+			if len(args) > 0 {
+				a = int64(args[0].Number)
+			}
+			if len(args) > 1 {
+				b = int64(args[1].Number)
+			}
+			return Value{Type: TypeNumber, Number: float64(a & b)}
+		},
+		"bitOr": func(args []Value, ctx ExecutionContext) Value {
+			var a, b int64
+			if len(args) > 0 {
+				a = int64(args[0].Number)
+			}
+			if len(args) > 1 {
+				b = int64(args[1].Number)
+			}
+			return Value{Type: TypeNumber, Number: float64(a | b)}
+		},
+		"bitXor": func(args []Value, ctx ExecutionContext) Value {
+			var a, b int64
+			if len(args) > 0 {
+				a = int64(args[0].Number)
+			}
+			if len(args) > 1 {
+				b = int64(args[1].Number)
+			}
+			return Value{Type: TypeNumber, Number: float64(a ^ b)}
+		},
+		"bitNot": func(args []Value, ctx ExecutionContext) Value {
+			var a int64
+			if len(args) > 0 {
+				a = int64(args[0].Number)
+			}
+			return Value{Type: TypeNumber, Number: float64(^a)}
+		},
+		"shiftL": func(args []Value, ctx ExecutionContext) Value {
+			var a int64
+			var b uint
+			if len(args) > 0 {
+				a = int64(args[0].Number)
+			}
+			if len(args) > 1 {
+				b = uint(args[1].Number)
+			}
+			return Value{Type: TypeNumber, Number: float64(a << b)}
+		},
+		"shiftR": func(args []Value, ctx ExecutionContext) Value {
+			var a int64
+			var b uint
+			if len(args) > 0 {
+				a = int64(args[0].Number)
+			}
+			if len(args) > 1 {
+				b = uint(args[1].Number)
+			}
+			return Value{Type: TypeNumber, Number: float64(a >> b)}
 		},
 	}
 
@@ -361,16 +460,6 @@ func GetStdlibModules() map[string]map[string]NativeFunc {
 				keys = append(keys, Value{Type: TypeString, String: k})
 			}
 			return Value{Type: TypeArray, Array: keys}
-		},
-		"values": func(args []Value, ctx ExecutionContext) Value {
-			if len(args) == 0 || args[0].Type != TypeObject {
-				return Value{Type: TypeVoid}
-			}
-			var vals []Value
-			for _, v := range args[0].Object {
-				vals = append(vals, v)
-			}
-			return Value{Type: TypeArray, Array: vals}
 		},
 	}
 
