@@ -259,7 +259,13 @@ func (ctx *executionContextImpl) Eval(node any) Value {
 }
 
 func (ctx *executionContextImpl) Call(task Value, args []Value) Value {
-	return ctx.interp.Call(task, args, ctx.scope)
+	finalArgs := args
+	if task.Type == TypeTask && !task.Task.IsNative {
+		if len(args) > len(task.Task.Params) {
+			finalArgs = args[:len(task.Task.Params)]
+		}
+	}
+	return ctx.interp.Call(task, finalArgs, ctx.scope)
 }
 
 func (ctx *executionContextImpl) Scope() Scope {
