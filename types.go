@@ -57,6 +57,15 @@ type Scope interface {
 	Exists(name string) bool
 }
 
+type Resource interface {
+	ID() string
+	Content() string
+	AST() Expr
+	SetAST(Expr)
+	Load() error
+	Resolve(id string) (Resource, error)
+}
+
 type IHALSerializable interface {
 	SerializeHAL() string
 }

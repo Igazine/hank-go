@@ -12,8 +12,11 @@ import (
 
 func main() {
 	cwd, _ := os.Getwd()
-	// Submodule is at vendor/hal relative to the hal-go project root
-	root := filepath.Join(cwd, "vendor/hal")
+	// Submodule is at vendor/hank relative to the hank-go project root
+	root := filepath.Join(cwd, "vendor/hank")
+	if _, err := os.Stat(root); os.IsNotExist(err) {
+		root = filepath.Join(cwd, "../../vendor/hank")
+	}
 	
 	if len(os.Args) < 2 {
 		runConformance(root)
@@ -22,51 +25,35 @@ func main() {
 
 	r := createRunner()
 
-	// Map CLI strings to HAL Host Arguments
-	var halArgs []hal.Value
+	// Map CLI strings to Hank Host Arguments
+	var hankArgs []hank.Value
 	if len(os.Args) > 2 {
 		for _, arg := range os.Args[2:] {
-			halArgs = append(halArgs, hal.Value{Type: hal.TypeString, String: arg})
+			hankArgs = append(hankArgs, hank.Value{Type: hank.TypeString, String: arg})
 		}
 	}
 
-	result, err := r.Run(os.Args[1], halArgs)
+	absPath, _ := filepath.Abs(os.Args[1])
+	res := NewFileResource(absPath)
+
+	result, err := r.Run(res, hankArgs)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
 	}
 
-	if result.Type == hal.TypeNumber {
+	if result.Type == hank.TypeNumber {
 		os.Exit(int(result.Number))
 	}
 	os.Exit(0)
 }
 
-func createRunner() *hal.Runner {
-	// 1. Instantiate the core Runner with OS-specific I/O
-	r := hal.NewRunner(
-		func(path string) (string, error) {
-			b, err := os.ReadFile(path)
-			return string(b), err
-		},
-		func(m, dir string) (string, error) {
-			if filepath.IsAbs(m) { return m, nil }
-			
-			baseDir := filepath.Dir(dir)
-			if dir == "" { baseDir = "." }
-			
-			joined := filepath.Join(baseDir, m)
-			if filepath.Ext(joined) == "" {
-				if _, err := os.Stat(joined + ".hal"); err == nil {
-					return joined + ".hal", nil
-				}
-			}
-			return filepath.Abs(joined)
-		},
-	)
+func createRunner() *hank.Runner {
+	// 1. Instantiate the core Runner
+	r := hank.NewRunner()
 
 	// 2. Register the Standard Library manually (Optional, per-task registration)
-	std := hal.GetStdlibModules()
+	std := hank.GetStdlibModules()
 	for modName, tasks := range std {
 		r.RegisterModule(modName, tasks)
 	}
@@ -77,118 +64,112 @@ func createRunner() *hal.Runner {
 	return r
 }
 
-func registerSyslib(r *hal.Runner) {
-	r.RegisterModule("os", map[string]hal.NativeFunc{
-		"type": func(args []hal.Value, ctx hal.ExecutionContext) hal.Value {
-			return hal.Value{Type: hal.TypeString, String: runtime.GOOS}
+func registerSyslib(r *hank.Runner) {
+	r.RegisterModule("os", map[string]hank.NativeFunc{
+		"type": func(args []hank.Value, ctx hank.ExecutionContext) hank.Value {
+			return hank.Value{Type: hank.TypeString, String: runtime.GOOS}
 		},
-		"name": func(args []hal.Value, ctx hal.ExecutionContext) hal.Value {
-			return hal.Value{Type: hal.TypeString, String: runtime.GOOS}
+		"name": func(args []hank.Value, ctx hank.ExecutionContext) hank.Value {
+			return hank.Value{Type: hank.TypeString, String: runtime.GOOS}
 		},
-		"arch": func(args []hal.Value, ctx hal.ExecutionContext) hal.Value {
-			return hal.Value{Type: hal.TypeString, String: runtime.GOARCH}
+		"arch": func(args []hank.Value, ctx hank.ExecutionContext) hank.Value {
+			return hank.Value{Type: hank.TypeString, String: runtime.GOARCH}
 		},
-		"memory": func(args []hal.Value, ctx hal.ExecutionContext) hal.Value {
-			obj := make(map[string]hal.Value)
-			obj["total"] = hal.Value{Type: hal.TypeNumber, Number: 1024}
-			obj["free"] = hal.Value{Type: hal.TypeNumber, Number: 512}
-			obj["used"] = hal.Value{Type: hal.TypeNumber, Number: 512}
-			return hal.Value{Type: hal.TypeObject, Object: obj}
+		"memory": func(args []hank.Value, ctx hank.ExecutionContext) hank.Value {
+			obj := make(map[string]hank.Value)
+			obj["total"] = hank.Value{Type: hank.TypeNumber, Number: 1024}
+			obj["free"] = hank.Value{Type: hank.TypeNumber, Number: 512}
+			obj["used"] = hank.Value{Type: hank.TypeNumber, Number: 512}
+			return hank.Value{Type: hank.TypeObject, Object: obj}
 		},
-		"cpu": func(args []hal.Value, ctx hal.ExecutionContext) hal.Value {
-			return hal.Value{Type: hal.TypeNumber, Number: 0}
+		"cpu": func(args []hank.Value, ctx hank.ExecutionContext) hank.Value {
+			return hank.Value{Type: hank.TypeNumber, Number: 0}
 		},
 	})
 
-	r.RegisterModule("host", map[string]hal.NativeFunc{
-		"cwd": func(args []hal.Value, ctx hal.ExecutionContext) hal.Value {
+	r.RegisterModule("host", map[string]hank.NativeFunc{
+		"cwd": func(args []hank.Value, ctx hank.ExecutionContext) hank.Value {
 			cwd, _ := os.Getwd()
-			return hal.Value{Type: hal.TypeString, String: cwd}
+			return hank.Value{Type: hank.TypeString, String: cwd}
 		},
-		"pid": func(args []hal.Value, ctx hal.ExecutionContext) hal.Value {
-			return hal.Value{Type: hal.TypeNumber, Number: float64(os.Getpid())}
+		"pid": func(args []hank.Value, ctx hank.ExecutionContext) hank.Value {
+			return hank.Value{Type: hank.TypeNumber, Number: float64(os.Getpid())}
 		},
-		"isRoot": func(args []hal.Value, ctx hal.ExecutionContext) hal.Value {
+		"isRoot": func(args []hank.Value, ctx hank.ExecutionContext) hank.Value {
 			if os.Getuid() == 0 {
-				return hal.Value{Type: hal.TypeNumber, Number: 1}
+				return hank.Value{Type: hank.TypeNumber, Number: 1}
 			}
-			return hal.Value{Type: hal.TypeVoid}
-		},
-		"signal": func(args []hal.Value, ctx hal.ExecutionContext) hal.Value {
-			if len(args) > 0 {
-				fmt.Printf("[SIGNAL] %v\n", hal.ValueToString(args[0]))
-			}
-			return hal.Value{Type: hal.TypeVoid}
+			return hank.Value{Type: hank.TypeVoid}
 		},
 	})
 
-	r.RegisterModule("fs", map[string]hal.NativeFunc{
-		"exists": func(args []hal.Value, ctx hal.ExecutionContext) hal.Value {
+	r.RegisterModule("fs", map[string]hank.NativeFunc{
+		"exists": func(args []hank.Value, ctx hank.ExecutionContext) hank.Value {
 			if len(args) == 0 {
-				return hal.Value{Type: hal.TypeVoid}
+				return hank.Value{Type: hank.TypeVoid}
 			}
-			if _, err := os.Stat(hal.ValueToString(args[0])); err == nil {
-				return hal.Value{Type: hal.TypeNumber, Number: 1}
+			if _, err := os.Stat(hank.ValueToString(args[0])); err == nil {
+				return hank.Value{Type: hank.TypeNumber, Number: 1}
 			}
-			return hal.Value{Type: hal.TypeVoid}
+			return hank.Value{Type: hank.TypeVoid}
 		},
-		"read": func(args []hal.Value, ctx hal.ExecutionContext) hal.Value {
+		"read": func(args []hank.Value, ctx hank.ExecutionContext) hank.Value {
 			if len(args) == 0 {
-				return hal.Value{Type: hal.TypeVoid}
+				return hank.Value{Type: hank.TypeVoid}
 			}
-			b, err := os.ReadFile(hal.ValueToString(args[0]))
+			b, err := os.ReadFile(hank.ValueToString(args[0]))
 			if err != nil {
-				return hal.Value{Type: hal.TypeVoid}
+				return hank.Value{Type: hank.TypeVoid}
 			}
-			return hal.Value{Type: hal.TypeString, String: string(b)}
+			return hank.Value{Type: hank.TypeString, String: string(b)}
 		},
-		"write": func(args []hal.Value, ctx hal.ExecutionContext) hal.Value {
+		"write": func(args []hank.Value, ctx hank.ExecutionContext) hank.Value {
 			if len(args) < 2 {
-				return hal.Value{Type: hal.TypeVoid}
+				return hank.Value{Type: hank.TypeVoid}
 			}
-			if err := os.WriteFile(hal.ValueToString(args[0]), []byte(hal.ValueToString(args[1])), 0644); err == nil {
-				return hal.Value{Type: hal.TypeNumber, Number: 1}
+			if err := os.WriteFile(hank.ValueToString(args[0]), []byte(hank.ValueToString(args[1])), 0644); err == nil {
+				return hank.Value{Type: hank.TypeNumber, Number: 1}
 			}
-			return hal.Value{Type: hal.TypeVoid}
+			return hank.Value{Type: hank.TypeVoid}
 		},
-		"deleteFile": func(args []hal.Value, ctx hal.ExecutionContext) hal.Value {
+		"deleteFile": func(args []hank.Value, ctx hank.ExecutionContext) hank.Value {
 			if len(args) == 0 {
-				return hal.Value{Type: hal.TypeVoid}
+				return hank.Value{Type: hank.TypeVoid}
 			}
-			if err := os.Remove(hal.ValueToString(args[0])); err == nil {
-				return hal.Value{Type: hal.TypeNumber, Number: 1}
+			if err := os.Remove(hank.ValueToString(args[0])); err == nil {
+				return hank.Value{Type: hank.TypeNumber, Number: 1}
 			}
-			return hal.Value{Type: hal.TypeVoid}
+			return hank.Value{Type: hank.TypeVoid}
 		},
-		"stat": func(args []hal.Value, ctx hal.ExecutionContext) hal.Value {
+		"stat": func(args []hank.Value, ctx hank.ExecutionContext) hank.Value {
 			if len(args) == 0 {
-				return hal.Value{Type: hal.TypeVoid}
+				return hank.Value{Type: hank.TypeVoid}
 			}
-			info, err := os.Stat(hal.ValueToString(args[0]))
+			info, err := os.Stat(hank.ValueToString(args[0]))
 			if err != nil {
-				return hal.Value{Type: hal.TypeVoid}
+				return hank.Value{Type: hank.TypeVoid}
 			}
-			obj := make(map[string]hal.Value)
-			obj["size"] = hal.Value{Type: hal.TypeNumber, Number: float64(info.Size())}
-			obj["mtime"] = hal.Value{Type: hal.TypeNumber, Number: float64(info.ModTime().UnixMilli())}
-			obj["isDir"] = hal.Value{Type: hal.TypeVoid}
+			obj := make(map[string]hank.Value)
+			obj["size"] = hank.Value{Type: hank.TypeNumber, Number: float64(info.Size())}
+			obj["mtime"] = hank.Value{Type: hank.TypeNumber, Number: float64(info.ModTime().UnixMilli())}
+			obj["isDir"] = hank.Value{Type: hank.TypeVoid}
 			if info.IsDir() {
-				obj["isDir"] = hal.Value{Type: hal.TypeNumber, Number: 1}
+				obj["isDir"] = hank.Value{Type: hank.TypeNumber, Number: 1}
 			}
-			return hal.Value{Type: hal.TypeObject, Object: obj}
+			return hank.Value{Type: hank.TypeObject, Object: obj}
 		},
 	})
 
-	r.RegisterModule("proc", map[string]hal.NativeFunc{
-		"run": func(args []hal.Value, ctx hal.ExecutionContext) hal.Value {
+	r.RegisterModule("proc", map[string]hank.NativeFunc{
+		"run": func(args []hank.Value, ctx hank.ExecutionContext) hank.Value {
 			if len(args) == 0 {
-				return hal.Value{Type: hal.TypeVoid}
+				return hank.Value{Type: hank.TypeVoid}
 			}
-			cmdName := hal.ValueToString(args[0])
+			cmdName := hank.ValueToString(args[0])
 			var cmdArgs []string
-			if len(args) > 1 && args[1].Type == hal.TypeArray {
+			if len(args) > 1 && args[1].Type == hank.TypeArray {
 				for _, a := range args[1].Array {
-					cmdArgs = append(cmdArgs, hal.ValueToString(a))
+					cmdArgs = append(cmdArgs, hank.ValueToString(a))
 				}
 			}
 			cmd := exec.Command(cmdName, cmdArgs...)
@@ -201,42 +182,45 @@ func registerSyslib(r *hal.Runner) {
 					code = 1
 				}
 			}
-			res := make(map[string]hal.Value)
-			res["code"] = hal.Value{Type: hal.TypeNumber, Number: float64(code)}
-			res["stdout"] = hal.Value{Type: hal.TypeString, String: string(out)}
-			res["stderr"] = hal.Value{Type: hal.TypeString, String: ""}
-			return hal.Value{Type: hal.TypeObject, Object: res}
+			res := make(map[string]hank.Value)
+			res["code"] = hank.Value{Type: hank.TypeNumber, Number: float64(code)}
+			res["stdout"] = hank.Value{Type: hank.TypeString, String: string(out)}
+			res["stderr"] = hank.Value{Type: hank.TypeString, String: ""}
+			return hank.Value{Type: hank.TypeObject, Object: res}
 		},
 	})
 }
 
 func runConformance(root string) {
 	conformanceTests := []string{
-		"test/conformance/01_literals.hal",
-		"test/conformance/02_gates.hal",
-		"test/conformance/03_scoping.hal",
-		"test/conformance/04_hoisting.hal",
-		"test/conformance/05_params.hal",
-		"test/conformance/06_macros.hal",
-		"test/conformance/07_returns.hal",
-		"test/conformance/08_host_args.hal",
-		"test/conformance/09_deep_nesting.hal",
-		"test/conformance/10_edge_cases.hal",
-		"test/conformance/11_regex_parse.hal",
-		"test/conformance/12_data_advanced.hal",
-		"test/conformance/13_logic_module.hal",
-		"test/conformance/14_syslib_hank.hal",
+		"test/conformance/01_literals.hank",
+		"test/conformance/02_gates.hank",
+		"test/conformance/03_scoping.hank",
+		"test/conformance/04_hoisting.hank",
+		"test/conformance/05_params.hank",
+		"test/conformance/06_macros.hank",
+		"test/conformance/07_returns.hank",
+		"test/conformance/08_host_args.hank",
+		"test/conformance/09_deep_nesting.hank",
+		"test/conformance/10_edge_cases.hank",
+		"test/conformance/11_regex_parse.hank",
+		"test/conformance/12_data_advanced.hank",
+		"test/conformance/13_logic_module.hank",
+		"test/conformance/14_syslib_hank.hank",
+		"test/conformance/15_logic_eq.hank",
+		"test/conformance/16_chained_assign.hank",
 	}
 
 	for _, t := range conformanceTests {
 		fmt.Printf("--- Running: %s ---\n", t)
 		r := createRunner()
-		path := filepath.Join(root, t)
-		args := []hal.Value{}
-		if strings.HasSuffix(t, "08_host_args.hal") {
-			args = append(args, hal.Value{Type: hal.TypeString, String: "Tamas"})
+		path, _ := filepath.Abs(filepath.Join(root, t))
+		res := NewFileResource(path)
+		args := []hank.Value{}
+		if strings.HasSuffix(t, "08_host_args.hank") {
+			args = append(args, hank.Value{Type: hank.TypeString, String: "Tamas"})
 		}
-		_, err := r.Run(path, args)
+		_, err := r.Run(res, args)
 		if err != nil {
 			fmt.Printf("Test Failed: %v\n", err)
 		}

@@ -34,34 +34,46 @@ func NewInterpreter(parentScope Scope, coreScope Scope) *Interpreter {
 }
 
 func (i *Interpreter) Run(expr Expr) (Value, error) {
-	i.hoist(expr, i.globalScope)
+	// Root level hoisting is now handled inside Eval for BlockExpr
 	return i.Eval(expr, i.globalScope), nil
 }
 
-func (i *Interpreter) hoist(expr Expr, scope Scope) {
-	switch e := expr.(type) {
-	case *BlockExpr:
-		for _, stmt := range e.Statements {
-			i.hoist(stmt, scope)
-		}
-	case *AssignExpr:
-		if _, ok := e.Value.(*FuncDefExpr); ok {
-			val := i.Eval(e.Value, scope)
-			scope.Set(e.Name, val)
-		}
-	}
-}
-
 func (i *Interpreter) Eval(expr Expr, scope Scope) Value {
-	if expr == nil { return Value{Type: TypeVoid} }
+	if expr == nil {
+		return Value{Type: TypeVoid}
+	}
 
 	switch e := expr.(type) {
 	case *BlockExpr:
+		// --- TASK HOISTING PASS ---
+		for _, stmt := range e.Statements {
+			if assign, ok := stmt.(*AssignExpr); ok {
+				// Direct func def
+				if _, isFunc := assign.Value.(*FuncDefExpr); isFunc {
+					val := i.Eval(assign.Value, scope)
+					scope.Set(assign.Name, val)
+				}
+				// Nested assignments (usually from macros)
+				if nested, ok := assign.Value.(*AssignExpr); ok {
+					if _, isFunc := nested.Value.(*FuncDefExpr); isFunc {
+						val := i.Eval(nested.Value, scope)
+						scope.Set(nested.Name, val)
+					}
+				}
+			}
+		}
+
 		var last Value = Value{Type: TypeVoid}
 		for _, stmt := range e.Statements {
+			// Skip already hoisted tasks in eval pass
 			if assign, ok := stmt.(*AssignExpr); ok {
 				if _, isFunc := assign.Value.(*FuncDefExpr); isFunc {
 					continue
+				}
+				if nested, ok := assign.Value.(*AssignExpr); ok {
+					if _, isFunc := nested.Value.(*FuncDefExpr); isFunc {
+						continue
+					}
 				}
 			}
 			last = i.Eval(stmt, scope)
@@ -83,7 +95,8 @@ func (i *Interpreter) Eval(expr Expr, scope Scope) Value {
 		if val := scope.Get(e.Name); val.Type != TypeVoid {
 			return val
 		}
-		return Value{Type: TypeVoid}
+		// Fallback to core if not shadowed
+		return i.coreScope.Get(e.Name)
 
 	case *FieldExpr:
 		obj := i.Eval(e.Object, scope)
@@ -101,12 +114,14 @@ func (i *Interpreter) Eval(expr Expr, scope Scope) Value {
 				IsNative: false,
 				Params:   e.Params,
 				Body:     e.Body,
-				Closure:  scope, // <--- Capture current scope
+				Closure:  scope,
 			},
 		}
 
 	case *FuncCallExpr:
-		if i.depth > MaxDepth { panic("Stack overflow") }
+		if i.depth > MaxDepth {
+			panic("Stack overflow")
+		}
 		target := i.Eval(e.Target, scope)
 		var args []Value
 		for _, argExpr := range e.Args {
@@ -163,7 +178,6 @@ func (i *Interpreter) evalFlowControl(e *FlowControlExpr, scope Scope) (result V
 				errStr := fmt.Sprintf("%v", r)
 				rescueScope := NewScope(scope)
 				rescueScope.Set(e.CatchVar, Value{Type: TypeString, String: errStr})
-				i.hoist(e.RescueBlock, rescueScope)
 				result = i.Eval(e.RescueBlock, rescueScope)
 			} else {
 				panic(r)
@@ -173,10 +187,8 @@ func (i *Interpreter) evalFlowControl(e *FlowControlExpr, scope Scope) (result V
 
 	cond := i.Eval(e.Condition, scope)
 	if i.isTruthy(cond) {
-		i.hoist(e.SuccessBlock, scope)
 		return i.Eval(e.SuccessBlock, scope)
 	} else if e.FallbackBlock != nil {
-		i.hoist(e.FallbackBlock, scope)
 		return i.Eval(e.FallbackBlock, scope)
 	}
 	return Value{Type: TypeVoid}
@@ -186,7 +198,7 @@ func (i *Interpreter) Call(task Value, args []Value, scope Scope) Value {
 	if task.Type != TypeTask {
 		panic(fmt.Sprintf("Target is not a function: %v", task.Type))
 	}
-	
+
 	tv := task.Task
 	if tv.IsNative {
 		ctx := &executionContextImpl{
@@ -198,13 +210,12 @@ func (i *Interpreter) Call(task Value, args []Value, scope Scope) Value {
 
 	i.depth++
 	defer func() { i.depth-- }()
-	
-	// Use captured closure as parent, NOT the global scope!
+
+	// Use captured closure as parent
 	taskScope := NewScope(tv.Closure)
 	i.mapArgsToParams(tv.Params, args, taskScope)
-	
+
 	bodyExpr := tv.Body.(Expr)
-	i.hoist(bodyExpr, taskScope)
 	return i.evalTaskBody(bodyExpr, taskScope)
 }
 

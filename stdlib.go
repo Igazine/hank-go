@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-func halEquals(a, b Value) bool {
+func hankEquals(a, b Value) bool {
 	if a.Type != b.Type {
 		return false
 	}
@@ -24,7 +24,7 @@ func halEquals(a, b Value) bool {
 			return false
 		}
 		for i := range a.Array {
-			if !halEquals(a.Array[i], b.Array[i]) {
+			if !hankEquals(a.Array[i], b.Array[i]) {
 				return false
 			}
 		}
@@ -35,7 +35,7 @@ func halEquals(a, b Value) bool {
 		}
 		for k, v1 := range a.Object {
 			v2, ok := b.Object[k]
-			if !ok || !halEquals(v1, v2) {
+			if !ok || !hankEquals(v1, v2) {
 				return false
 			}
 		}
@@ -255,7 +255,7 @@ func GetStdlibModules() map[string]map[string]NativeFunc {
 			if len(args) < 2 {
 				return Value{Type: TypeVoid}
 			}
-			if halEquals(args[0], args[1]) {
+			if hankEquals(args[0], args[1]) {
 				return Value{Type: TypeNumber, Number: 1}
 			}
 			return Value{Type: TypeVoid}
@@ -288,7 +288,7 @@ func GetStdlibModules() map[string]map[string]NativeFunc {
 			if len(args) < 2 {
 				return Value{Type: TypeVoid}
 			}
-			if halEquals(args[0], args[1]) {
+			if hankEquals(args[0], args[1]) {
 				return Value{Type: TypeNumber, Number: 1}
 			}
 			return Value{Type: TypeVoid}
@@ -384,14 +384,14 @@ func GetStdlibModules() map[string]map[string]NativeFunc {
 			if err := json.Unmarshal([]byte(s), &data); err != nil {
 				return Value{Type: TypeVoid}
 			}
-			return mapAnyToHal(data)
+			return mapAnyToHank(data)
 		},
 		"stringify": func(args []Value, ctx ExecutionContext) Value {
 			if len(args) == 0 {
 				return Value{Type: TypeVoid}
 			}
 			// Check for Opaque values
-			any, ok := mapHalToAny(args[0])
+			any, ok := mapHankToAny(args[0])
 			if !ok {
 				return Value{Type: TypeVoid}
 			}
@@ -406,7 +406,7 @@ func GetStdlibModules() map[string]map[string]NativeFunc {
 	return mods
 }
 
-func mapAnyToHal(v interface{}) Value {
+func mapAnyToHank(v interface{}) Value {
 	if v == nil {
 		return Value{Type: TypeVoid}
 	}
@@ -428,21 +428,21 @@ func mapAnyToHal(v interface{}) Value {
 	case []interface{}:
 		var arr []Value
 		for _, item := range val {
-			arr = append(arr, mapAnyToHal(item))
+			arr = append(arr, mapAnyToHank(item))
 		}
 		return Value{Type: TypeArray, Array: arr}
 	case map[string]interface{}:
 		obj := make(map[string]Value)
 		for k, v := range val {
-			obj[k] = mapAnyToHal(v)
+			obj[k] = mapAnyToHank(v)
 		}
 		return Value{Type: TypeObject, Object: obj}
 	default:
-		panic(fmt.Sprintf("HAL Boundary Error: Complex host object [%T] must implement SerializeHAL() to bridge into HAL.", v))
+		panic(fmt.Sprintf("Hank Boundary Error: Complex host object [%T] must implement SerializeHAL() to bridge into Hank.", v))
 	}
 }
 
-func mapHalToAny(v Value) (interface{}, bool) {
+func mapHankToAny(v Value) (interface{}, bool) {
 	switch v.Type {
 	case TypeString:
 		return v.String, true
@@ -451,16 +451,20 @@ func mapHalToAny(v Value) (interface{}, bool) {
 	case TypeArray:
 		var arr []interface{}
 		for _, item := range v.Array {
-			any, ok := mapHalToAny(item)
-			if !ok { return nil, false }
+			any, ok := mapHankToAny(item)
+			if !ok {
+				return nil, false
+			}
 			arr = append(arr, any)
 		}
 		return arr, true
 	case TypeObject:
 		obj := make(map[string]interface{})
 		for k, val := range v.Object {
-			any, ok := mapHalToAny(val)
-			if !ok { return nil, false }
+			any, ok := mapHankToAny(val)
+			if !ok {
+				return nil, false
+			}
 			obj[k] = any
 		}
 		return obj, true

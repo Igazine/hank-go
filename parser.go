@@ -8,20 +8,17 @@ import (
 )
 
 type Parser struct {
-	tokens   []Token
-	pos      int
-	filename string
-	macroMap map[string]string
+	tokens        []Token
+	pos           int
+	filename      string
+	macroResolver func(string) (Expr, error)
 }
 
-func NewParser(tokens []Token, filename string, macroMap map[string]string) *Parser {
-	if macroMap == nil {
-		macroMap = make(map[string]string)
-	}
+func NewParser(tokens []Token, filename string, macroResolver func(string) (Expr, error)) *Parser {
 	return &Parser{
-		tokens:   tokens,
-		filename: filename,
-		macroMap: macroMap,
+		tokens:        tokens,
+		filename:      filename,
+		macroResolver: macroResolver,
 	}
 }
 
@@ -423,22 +420,13 @@ func (p *Parser) parseInclude() (Expr, error) {
 		return nil, p.error("Syntax Error: The '@' macro strictly requires a string literal path (e.g., @ \"utils\"). Identifier shorthand is not allowed.")
 	}
 
-	content, ok := p.macroMap[rawPath]
-	if !ok {
-		return nil, p.error(fmt.Sprintf("Macro resource not found: @%s", rawPath))
-	}
-
-	base := filepath.Base(rawPath)
-	taskName := strings.TrimSuffix(base, ".hank")
-
-	subLexer := NewLexer(content)
-	subTokens := subLexer.Tokenize()
-	subParser := NewParser(subTokens, rawPath, p.macroMap)
-
-	taskAst, err := subParser.Parse()
+	taskAst, err := p.macroResolver(rawPath)
 	if err != nil {
 		return nil, err
 	}
+
+	base := filepath.Base(rawPath)
+	taskName := strings.TrimSuffix(base, filepath.Ext(base))
 
 	return &AssignExpr{Name: taskName, Value: taskAst, Token: td}, nil
 }
