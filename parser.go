@@ -26,10 +26,10 @@ func NewParser(tokens []Token, filename string, macroMap map[string]string) *Par
 }
 
 func (p *Parser) Parse() (Expr, error) {
-	td := p.peekTd()
+	tdRoot := p.peekTd()
 	var exprs []Expr
 
-	// { MacroInclude }
+	// 1. Consume Macro Includes
 	for !p.isEof() {
 		p.skipNewlines()
 		if p.peek().Type != TokenAt {
@@ -44,23 +44,22 @@ func (p *Parser) Parse() (Expr, error) {
 
 	p.skipNewlines()
 	if p.isEof() {
-		return nil, p.error("Script must conclude with a FuncDef or a bare Block")
+		return nil, p.error("Syntax Error: Script is empty.")
 	}
 
-	// ( FuncDef | Block )
-	tdTask := p.peekTd()
+	// 2. Parse exactly ONE TaskDef (FuncDef or Block)
 	var task Expr
 	var err error
-	if tdTask.Type == TokenLParen {
+	if p.peek().Type == TokenLParen && p.isFuncDefStart() {
 		task, err = p.parseFuncDef()
-	} else if tdTask.Type == TokenLBrace {
+	} else if p.peek().Type == TokenLBrace {
 		body, err := p.parseBlock()
 		if err != nil {
 			return nil, err
 		}
-		task = &FuncDefExpr{Params: []Param{}, Body: body, Token: tdTask}
+		task = &FuncDefExpr{Params: []Param{}, Body: body, Token: p.peekTd()}
 	} else {
-		return nil, p.error("Script must conclude with a FuncDef or a bare Block")
+		return nil, p.error("Syntax Error: Expected main task definition (a closure or a block).")
 	}
 	if err != nil {
 		return nil, err
@@ -68,12 +67,16 @@ func (p *Parser) Parse() (Expr, error) {
 
 	exprs = append(exprs, task)
 
+	// 3. Assert EOF
 	p.skipNewlines()
 	if !p.isEof() {
-		return nil, p.error("Unexpected content after script task definition")
+		return nil, p.error("Syntax Error: Unexpected code outside of main task. A Hank script must contain exactly one Task definition.")
 	}
 
-	return &BlockExpr{Statements: exprs, Token: td}, nil
+	if len(exprs) == 1 {
+		return exprs[0], nil
+	}
+	return &BlockExpr{Statements: exprs, Token: tdRoot}, nil
 }
 
 func (p *Parser) parseStatement() (Expr, error) {
