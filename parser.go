@@ -413,14 +413,14 @@ func (p *Parser) parseReturn() (Expr, error) {
 	}
 	return &UnOpExpr{Op: "^", Target: val, Token: td}, nil
 }
-
 func (p *Parser) parseInclude() (Expr, error) {
 	td := p.consume(TokenAt)
 	var rawPath string
 	if p.peek().Type == TokenString {
-		rawPath = p.consume(TokenString).Literal
+		t := p.consume(TokenString)
+		rawPath = t.Literal
 	} else {
-		rawPath = p.consumeIdentifier()
+		return nil, p.error("Syntax Error: The '@' macro strictly requires a string literal path (e.g., @ \"utils\"). Identifier shorthand is not allowed.")
 	}
 
 	content, ok := p.macroMap[rawPath]
