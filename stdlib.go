@@ -106,6 +106,22 @@ func GetStdlibModules() map[string]map[string]NativeFunc {
 			}
 			return Value{Type: TypeVoid}
 		},
+		"while": func(args []Value, ctx ExecutionContext) Value {
+			if len(args) < 2 {
+				return Value{Type: TypeVoid}
+			}
+			cond := args[0]
+			body := args[1]
+			var last Value
+			for {
+				condVal := ctx.Call(cond, []Value{})
+				if condVal.Type == TypeVoid {
+					break
+				}
+				last = ctx.Call(body, []Value{})
+			}
+			return last
+		},
 	}
 
 	mods["env"] = map[string]NativeFunc{
