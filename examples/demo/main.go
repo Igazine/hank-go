@@ -3,10 +3,9 @@ package main
 import (
 	"fmt"
 	"github.com/Igazine/hank-go"
+	"github.com/Igazine/hank-go/ext"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 )
 
@@ -17,7 +16,7 @@ func main() {
 	if _, err := os.Stat(root); os.IsNotExist(err) {
 		root = filepath.Join(cwd, "../../vendor/hank")
 	}
-	
+
 	if len(os.Args) < 2 {
 		runConformance(root)
 		return
@@ -52,143 +51,12 @@ func createRunner() *hank.Runner {
 	// 1. Instantiate the core Runner
 	r := hank.NewRunner()
 
-	// 2. Register the Standard Library manually (Optional, per-task registration)
-	std := hank.GetStdlibModules()
-	for modName, tasks := range std {
-		r.RegisterModule(modName, tasks)
-	}
-
-	// 3. Register Custom SYSLIB
-	registerSyslib(r)
+	// 2. Register Extensions (Batteries included, but disconnected)
+	r.RegisterExtension(&hank.StdLib{})
+	r.RegisterExtension(&ext.PlatformExtension{})
+	r.RegisterExtension(&ext.SysExtension{})
 
 	return r
-}
-
-func registerSyslib(r *hank.Runner) {
-	r.RegisterModule("os", map[string]hank.NativeFunc{
-		"type": func(args []hank.Value, ctx hank.ExecutionContext) hank.Value {
-			return hank.Value{Type: hank.TypeString, String: runtime.GOOS}
-		},
-		"name": func(args []hank.Value, ctx hank.ExecutionContext) hank.Value {
-			return hank.Value{Type: hank.TypeString, String: runtime.GOOS}
-		},
-		"arch": func(args []hank.Value, ctx hank.ExecutionContext) hank.Value {
-			return hank.Value{Type: hank.TypeString, String: runtime.GOARCH}
-		},
-		"memory": func(args []hank.Value, ctx hank.ExecutionContext) hank.Value {
-			obj := make(map[string]hank.Value)
-			obj["total"] = hank.Value{Type: hank.TypeNumber, Number: 1024}
-			obj["free"] = hank.Value{Type: hank.TypeNumber, Number: 512}
-			obj["used"] = hank.Value{Type: hank.TypeNumber, Number: 512}
-			return hank.Value{Type: hank.TypeObject, Object: obj}
-		},
-		"cpu": func(args []hank.Value, ctx hank.ExecutionContext) hank.Value {
-			return hank.Value{Type: hank.TypeNumber, Number: 0}
-		},
-	})
-
-	r.RegisterModule("host", map[string]hank.NativeFunc{
-		"cwd": func(args []hank.Value, ctx hank.ExecutionContext) hank.Value {
-			cwd, _ := os.Getwd()
-			return hank.Value{Type: hank.TypeString, String: cwd}
-		},
-		"pid": func(args []hank.Value, ctx hank.ExecutionContext) hank.Value {
-			return hank.Value{Type: hank.TypeNumber, Number: float64(os.Getpid())}
-		},
-		"isRoot": func(args []hank.Value, ctx hank.ExecutionContext) hank.Value {
-			if os.Getuid() == 0 {
-				return hank.Value{Type: hank.TypeNumber, Number: 1}
-			}
-			return hank.Value{Type: hank.TypeVoid}
-		},
-	})
-
-	r.RegisterModule("fs", map[string]hank.NativeFunc{
-		"exists": func(args []hank.Value, ctx hank.ExecutionContext) hank.Value {
-			if len(args) == 0 {
-				return hank.Value{Type: hank.TypeVoid}
-			}
-			if _, err := os.Stat(hank.ValueToString(args[0])); err == nil {
-				return hank.Value{Type: hank.TypeNumber, Number: 1}
-			}
-			return hank.Value{Type: hank.TypeVoid}
-		},
-		"read": func(args []hank.Value, ctx hank.ExecutionContext) hank.Value {
-			if len(args) == 0 {
-				return hank.Value{Type: hank.TypeVoid}
-			}
-			b, err := os.ReadFile(hank.ValueToString(args[0]))
-			if err != nil {
-				return hank.Value{Type: hank.TypeVoid}
-			}
-			return hank.Value{Type: hank.TypeString, String: string(b)}
-		},
-		"write": func(args []hank.Value, ctx hank.ExecutionContext) hank.Value {
-			if len(args) < 2 {
-				return hank.Value{Type: hank.TypeVoid}
-			}
-			if err := os.WriteFile(hank.ValueToString(args[0]), []byte(hank.ValueToString(args[1])), 0644); err == nil {
-				return hank.Value{Type: hank.TypeNumber, Number: 1}
-			}
-			return hank.Value{Type: hank.TypeVoid}
-		},
-		"deleteFile": func(args []hank.Value, ctx hank.ExecutionContext) hank.Value {
-			if len(args) == 0 {
-				return hank.Value{Type: hank.TypeVoid}
-			}
-			if err := os.Remove(hank.ValueToString(args[0])); err == nil {
-				return hank.Value{Type: hank.TypeNumber, Number: 1}
-			}
-			return hank.Value{Type: hank.TypeVoid}
-		},
-		"stat": func(args []hank.Value, ctx hank.ExecutionContext) hank.Value {
-			if len(args) == 0 {
-				return hank.Value{Type: hank.TypeVoid}
-			}
-			info, err := os.Stat(hank.ValueToString(args[0]))
-			if err != nil {
-				return hank.Value{Type: hank.TypeVoid}
-			}
-			obj := make(map[string]hank.Value)
-			obj["size"] = hank.Value{Type: hank.TypeNumber, Number: float64(info.Size())}
-			obj["mtime"] = hank.Value{Type: hank.TypeNumber, Number: float64(info.ModTime().UnixMilli())}
-			obj["isDir"] = hank.Value{Type: hank.TypeVoid}
-			if info.IsDir() {
-				obj["isDir"] = hank.Value{Type: hank.TypeNumber, Number: 1}
-			}
-			return hank.Value{Type: hank.TypeObject, Object: obj}
-		},
-	})
-
-	r.RegisterModule("proc", map[string]hank.NativeFunc{
-		"run": func(args []hank.Value, ctx hank.ExecutionContext) hank.Value {
-			if len(args) == 0 {
-				return hank.Value{Type: hank.TypeVoid}
-			}
-			cmdName := hank.ValueToString(args[0])
-			var cmdArgs []string
-			if len(args) > 1 && args[1].Type == hank.TypeArray {
-				for _, a := range args[1].Array {
-					cmdArgs = append(cmdArgs, hank.ValueToString(a))
-				}
-			}
-			cmd := exec.Command(cmdName, cmdArgs...)
-			out, err := cmd.CombinedOutput()
-			code := 0
-			if err != nil {
-				if exitErr, ok := err.(*exec.ExitError); ok {
-					code = exitErr.ExitCode()
-				} else {
-					code = 1
-				}
-			}
-			res := make(map[string]hank.Value)
-			res["code"] = hank.Value{Type: hank.TypeNumber, Number: float64(code)}
-			res["stdout"] = hank.Value{Type: hank.TypeString, String: string(out)}
-			res["stderr"] = hank.Value{Type: hank.TypeString, String: ""}
-			return hank.Value{Type: hank.TypeObject, Object: res}
-		},
-	})
 }
 
 func runConformance(root string) {
@@ -206,7 +74,7 @@ func runConformance(root string) {
 		"test/conformance/11_regex_parse.hank",
 		"test/conformance/12_data_advanced.hank",
 		"test/conformance/13_logic_module.hank",
-		"test/conformance/14_syslib_hank.hank",
+		// "test/conformance/14_syslib_hank.hank", // MOVED to extensions
 		"test/conformance/15_logic_eq.hank",
 		"test/conformance/16_chained_assign.hank",
 		"test/conformance/17_num_module.hank",
@@ -224,6 +92,24 @@ func runConformance(root string) {
 		_, err := r.Run(res, args)
 		if err != nil {
 			fmt.Printf("Test Failed: %v\n", err)
+		}
+		fmt.Printf("--------------------\n\n")
+	}
+
+	// Run Extension Tests
+	extTests := []string{
+		"test/extensions/sys.hank",
+		"test/extensions/platform_bin.hank",
+	}
+
+	for _, t := range extTests {
+		fmt.Printf("--- Running Extension Test: %s ---\n", t)
+		r := createRunner()
+		path, _ := filepath.Abs(filepath.Join(root, t))
+		res := NewFileResource(path)
+		_, err := r.Run(res, []hank.Value{})
+		if err != nil {
+			fmt.Printf("Extension Test Failed: %v\n", err)
 		}
 		fmt.Printf("--------------------\n\n")
 	}

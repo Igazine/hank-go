@@ -1,11 +1,10 @@
 package ext
 
 import (
-	"fmt"
-	"os"
-	"os/exec"
-	"runtime"
-	"github.com/igazine/hank-go"
+        "os"
+        "os/exec"
+        "runtime"
+        "github.com/Igazine/hank-go"
 )
 
 type SysExtension struct{}

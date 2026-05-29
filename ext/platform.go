@@ -2,7 +2,7 @@ package ext
 
 import (
 	"math"
-	"github.com/igazine/hank-go"
+	"github.com/Igazine/hank-go"
 )
 
 const safeIntMax = 9007199254740991.0

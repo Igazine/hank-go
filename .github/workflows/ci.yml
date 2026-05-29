@@ -10,4 +10,4 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.22'
-      - run: go run ./examples/demo
+      - run: cd examples/demo && go run .
