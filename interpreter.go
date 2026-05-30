@@ -4,52 +4,83 @@ import (
 	"fmt"
 )
 
-type ReturnSignal struct {
+type EvalResultType int
+
+const (
+	ResultValue EvalResultType = iota
+	ResultReturn
+	ResultBreak
+	ResultError
+)
+
+type EvalResult struct {
+	Type  EvalResultType
 	Value Value
 }
 
-func (r *ReturnSignal) Error() string {
-	return "Return signal"
-}
-
 type Interpreter struct {
-	globalScope Scope
-	coreScope   Scope
-	depth       int
+	globalScope  Scope
+	coreScope    Scope
+	localization map[int]string
+	depth        int
 }
 
 const MaxDepth = 500
 
-func NewInterpreter(parentScope Scope, coreScope Scope) *Interpreter {
+func NewInterpreter(parentScope Scope, coreScope Scope, localization map[int]string) *Interpreter {
 	if coreScope == nil {
 		coreScope = NewScope(nil)
 	}
 	if parentScope == nil {
 		parentScope = NewScope(coreScope)
 	}
+	if localization == nil {
+		localization = make(map[int]string)
+	}
 	return &Interpreter{
-		globalScope: parentScope,
-		coreScope:   coreScope,
+		globalScope:  parentScope,
+		coreScope:    coreScope,
+		localization: localization,
 	}
 }
 
 func (i *Interpreter) Run(expr Expr) (Value, error) {
-	defer func() {
-		if r := recover(); r != nil {
-			if _, ok := r.(*ReturnSignal); ok {
-				// Should not happen at root
-			} else {
-				// Re-panic if it's not a return signal, or handle it?
-				// Actually, we should probably catch HankErrorValue here.
-			}
-		}
-	}()
-	return i.Eval(expr, i.globalScope), nil
+	res := i.evalInScope(expr, i.globalScope)
+	switch res.Type {
+	case ResultValue, ResultReturn:
+		return res.Value, nil
+	case ResultBreak:
+		return Value{Type: TypeVoid}, nil
+	case ResultError:
+		return res.Value, nil
+	}
+	return Value{Type: TypeVoid}, nil
 }
 
 func (i *Interpreter) Eval(expr Expr, scope Scope) Value {
+	res := i.evalInScope(expr, scope)
+	switch res.Type {
+	case ResultValue, ResultReturn:
+		return res.Value
+	case ResultBreak:
+		return Value{Type: TypeOpaque, Opaque: &OpaqueValue{Label: "__ControlFlow", Data: "Break"}}
+	case ResultError:
+		return res.Value
+	}
+	return Value{Type: TypeVoid}
+}
+
+func (i *Interpreter) IsError(val Value) bool {
+	return val.Type == TypeError
+}
+
+func (i *Interpreter) GetLocalization() map[int]string {
+	return i.localization
+}
+
+func (i *Interpreter) evalInScope(expr Expr, scope Scope) EvalResult {
 	if expr == nil {
-		return Value{Type: TypeVoid}
+		return EvalResult{Type: ResultValue, Value: Value{Type: TypeVoid}}
 	}
 
 	switch e := expr.(type) {
@@ -57,16 +88,18 @@ func (i *Interpreter) Eval(expr Expr, scope Scope) Value {
 		// --- TASK HOISTING PASS ---
 		for _, stmt := range e.Statements {
 			if assign, ok := stmt.(*AssignExpr); ok {
-				// Direct func def
 				if _, isFunc := assign.Value.(*FuncDefExpr); isFunc {
-					val := i.Eval(assign.Value, scope)
-					scope.Set(assign.Name, val)
+					res := i.evalInScope(assign.Value, scope)
+					if res.Type == ResultValue {
+						scope.Set(assign.Name, res.Value)
+					}
 				}
-				// Nested assignments (usually from macros)
 				if nested, ok := assign.Value.(*AssignExpr); ok {
 					if _, isFunc := nested.Value.(*FuncDefExpr); isFunc {
-						val := i.Eval(nested.Value, scope)
-						scope.Set(nested.Name, val)
+						res := i.evalInScope(nested.Value, scope)
+						if res.Type == ResultValue {
+							scope.Set(nested.Name, res.Value)
+						}
 					}
 				}
 			}
@@ -74,7 +107,6 @@ func (i *Interpreter) Eval(expr Expr, scope Scope) Value {
 
 		var last Value = Value{Type: TypeVoid}
 		for _, stmt := range e.Statements {
-			// Skip already hoisted tasks in eval pass
 			if assign, ok := stmt.(*AssignExpr); ok {
 				if _, isFunc := assign.Value.(*FuncDefExpr); isFunc {
 					continue
@@ -85,39 +117,63 @@ func (i *Interpreter) Eval(expr Expr, scope Scope) Value {
 					}
 				}
 			}
-			last = i.Eval(stmt, scope)
+			res := i.evalInScope(stmt, scope)
+			if res.Type != ResultValue {
+				return res
+			}
+			last = res.Value
 		}
-		return last
+		return EvalResult{Type: ResultValue, Value: last}
 
 	case *AssignExpr:
-		val := i.Eval(e.Value, scope)
-		scope.Set(e.Name, val)
-		return val
+		res := i.evalInScope(e.Value, scope)
+		if res.Type == ResultValue {
+			scope.Set(e.Name, res.Value)
+		}
+		return res
 
 	case *LiteralExpr:
-		return e.Value
+		return EvalResult{Type: ResultValue, Value: e.Value}
+
+	case *ErrorExpr:
+		var args []Value
+		for _, argExpr := range e.Args {
+			res := i.evalInScope(argExpr, scope)
+			if res.Type != ResultValue {
+				return res
+			}
+			args = append(args, res.Value)
+		}
+		return EvalResult{Type: ResultValue, Value: Value{Type: TypeError, Error: &ErrorValue{Code: e.Code, Args: args}}}
 
 	case *IdentExpr:
 		if e.IsCore {
-			return i.coreScope.Get(e.Name)
+			return EvalResult{Type: ResultValue, Value: i.coreScope.Get(e.Name)}
 		}
 		if val := scope.Get(e.Name); val.Type != TypeVoid {
-			return val
+			return EvalResult{Type: ResultValue, Value: val}
 		}
-		// Fallback to core if not shadowed
-		return i.coreScope.Get(e.Name)
+		return EvalResult{Type: ResultValue, Value: i.coreScope.Get(e.Name)}
 
 	case *FieldExpr:
-		obj := i.Eval(e.Object, scope)
-		if obj.Type == TypeObject {
-			if val, ok := obj.Object[e.FieldName]; ok {
-				return val
-			}
+		res := i.evalInScope(e.Collection, scope)
+		if res.Type != ResultValue {
+			return res
 		}
-		return Value{Type: TypeVoid}
+		coll := res.Value
+		if coll.Type == TypeMap {
+			if val, ok := coll.Map[e.FieldName]; ok {
+				return EvalResult{Type: ResultValue, Value: val}
+			}
+		} else if coll.Type == TypeArray && e.FieldName == "length" {
+			return EvalResult{Type: ResultValue, Value: Value{Type: TypeNumber, Number: float64(len(*coll.Array))}}
+		} else if coll.Type == TypeString && e.FieldName == "length" {
+			return EvalResult{Type: ResultValue, Value: Value{Type: TypeNumber, Number: float64(len(coll.String))}}
+		}
+		return EvalResult{Type: ResultValue, Value: Value{Type: TypeVoid}}
 
 	case *FuncDefExpr:
-		return Value{
+		return EvalResult{Type: ResultValue, Value: Value{
 			Type: TypeTask,
 			Task: &TaskValue{
 				IsNative: false,
@@ -125,87 +181,101 @@ func (i *Interpreter) Eval(expr Expr, scope Scope) Value {
 				Body:     e.Body,
 				Closure:  scope,
 			},
-		}
+		}}
 
 	case *FuncCallExpr:
 		if i.depth > MaxDepth {
-			panic(CreateHankError(GenericRuntimeError, []interface{}{"Stack overflow"}, "", 0, ""))
+			return EvalResult{Type: ResultError, Value: Value{Type: TypeError, Error: &ErrorValue{Code: GenericRuntimeError, Args: []Value{{Type: TypeString, String: "Stack overflow"}}}}}
 		}
-		target := i.Eval(e.Target, scope)
+		res := i.evalInScope(e.Target, scope)
+		if res.Type != ResultValue {
+			return res
+		}
+		target := res.Value
+
 		var args []Value
 		for _, argExpr := range e.Args {
-			args = append(args, i.Eval(argExpr, scope))
+			argRes := i.evalInScope(argExpr, scope)
+			if argRes.Type != ResultValue {
+				return argRes
+			}
+			args = append(args, argRes.Value)
 		}
-		return i.Call(target, args, scope)
+		return i.callInternal(target, args, scope)
 
 	case *UnOpExpr:
+		res := i.evalInScope(e.Target, scope)
+		if res.Type != ResultValue {
+			return res
+		}
+		val := res.Value
+
 		switch e.Op {
 		case "!":
-			val := i.Eval(e.Target, scope)
 			if i.isTruthy(val) {
-				return Value{Type: TypeVoid}
+				return EvalResult{Type: ResultValue, Value: Value{Type: TypeVoid}}
 			}
-			return Value{Type: TypeNumber, Number: 1}
+			return EvalResult{Type: ResultValue, Value: Value{Type: TypeNumber, Number: 1}}
 		case "^":
-			var val Value = Value{Type: TypeVoid}
-			if e.Target != nil {
-				val = i.Eval(e.Target, scope)
-			}
-			panic(&ReturnSignal{Value: val})
+			return EvalResult{Type: ResultReturn, Value: val}
 		case "?":
-			return i.Eval(e.Target, scope)
+			return res
 		}
 
 	case *FlowControlExpr:
-		return i.evalFlowControl(e, scope)
+		condRes := i.evalInScope(e.Condition, scope)
+		var branchRes EvalResult
 
-	case *ObjectExpr:
+		if condRes.Type == ResultValue {
+			if i.isTruthy(condRes.Value) {
+				branchRes = i.evalInScope(e.SuccessBlock, scope)
+			} else if e.FallbackBlock != nil {
+				branchRes = i.evalInScope(e.FallbackBlock, scope)
+			} else {
+				branchRes = EvalResult{Type: ResultValue, Value: Value{Type: TypeVoid}}
+			}
+		} else {
+			branchRes = condRes
+		}
+
+		if branchRes.Type == ResultError && e.RescueBlock != nil {
+			rescueScope := NewScope(scope)
+			if e.CatchVar != "" {
+				rescueScope.Set(e.CatchVar, branchRes.Value)
+			}
+			return i.evalInScope(e.RescueBlock, rescueScope)
+		}
+		return branchRes
+
+	case *MapExpr:
 		fields := make(map[string]Value)
 		for k, vExpr := range e.Fields {
-			fields[k] = i.Eval(vExpr, scope)
+			res := i.evalInScope(vExpr, scope)
+			if res.Type != ResultValue {
+				return res
+			}
+			fields[k] = res.Value
 		}
-		return Value{Type: TypeObject, Object: fields}
+		return EvalResult{Type: ResultValue, Value: Value{Type: TypeMap, Map: fields}}
 
 	case *ArrayExpr:
-		var items []Value
+		items := new([]Value)
 		for _, itemExpr := range e.Items {
-			items = append(items, i.Eval(itemExpr, scope))
+			res := i.evalInScope(itemExpr, scope)
+			if res.Type != ResultValue {
+				return res
+			}
+			*items = append(*items, res.Value)
 		}
-		return Value{Type: TypeArray, Array: items}
+		return EvalResult{Type: ResultValue, Value: Value{Type: TypeArray, Array: items}}
 	}
 
-	return Value{Type: TypeVoid}
+	return EvalResult{Type: ResultValue, Value: Value{Type: TypeVoid}}
 }
 
-func (i *Interpreter) evalFlowControl(e *FlowControlExpr, scope Scope) (result Value) {
-	defer func() {
-		if r := recover(); r != nil {
-			if sig, ok := r.(*ReturnSignal); ok {
-				panic(sig)
-			}
-			if e.RescueBlock != nil {
-				errStr := fmt.Sprintf("%v", r)
-				rescueScope := NewScope(scope)
-				rescueScope.Set(e.CatchVar, Value{Type: TypeString, String: errStr})
-				result = i.Eval(e.RescueBlock, rescueScope)
-			} else {
-				panic(r)
-			}
-		}
-	}()
-
-	cond := i.Eval(e.Condition, scope)
-	if i.isTruthy(cond) {
-		return i.Eval(e.SuccessBlock, scope)
-	} else if e.FallbackBlock != nil {
-		return i.Eval(e.FallbackBlock, scope)
-	}
-	return Value{Type: TypeVoid}
-}
-
-func (i *Interpreter) Call(task Value, args []Value, scope Scope) Value {
+func (i *Interpreter) callInternal(task Value, args []Value, scope Scope) EvalResult {
 	if task.Type != TypeTask {
-		panic(CreateHankError(TargetNotFunction, []interface{}{ValueToString(task)}, "", 0, ""))
+		return EvalResult{Type: ResultError, Value: Value{Type: TypeError, Error: &ErrorValue{Code: TargetNotFunction, Args: []Value{{Type: TypeString, String: ValueToString(task)}}}}}
 	}
 
 	tv := task.Task
@@ -214,49 +284,68 @@ func (i *Interpreter) Call(task Value, args []Value, scope Scope) Value {
 			interp: i,
 			scope:  scope,
 		}
-		return tv.Native(args, ctx)
+		res := tv.Native(args, ctx)
+		if res.Type == TypeOpaque && res.Opaque.Label == "__ControlFlow" && fmt.Sprintf("%v", res.Opaque.Data) == "Break" {
+			return EvalResult{Type: ResultBreak}
+		}
+		if res.Type == TypeError {
+			return EvalResult{Type: ResultError, Value: res}
+		}
+		return EvalResult{Type: ResultValue, Value: res}
 	}
 
 	i.depth++
 	defer func() { i.depth-- }()
 
-	// Use captured closure as parent
-	taskScope := NewScope(tv.Closure)
-	i.mapArgsToParams(tv.Params, args, taskScope)
-
-	bodyExpr := tv.Body.(Expr)
-	return i.evalTaskBody(bodyExpr, taskScope)
-}
-
-func (i *Interpreter) evalTaskBody(body Expr, scope Scope) (val Value) {
-	defer func() {
-		if r := recover(); r != nil {
-			if sig, ok := r.(*ReturnSignal); ok {
-				val = sig.Value
-			} else {
-				panic(r)
-			}
-		}
-	}()
-	return i.Eval(body, scope)
-}
-
-func (i *Interpreter) mapArgsToParams(params []Param, args []Value, scope Scope) {
-	if len(args) > len(params) {
-		panic(CreateHankError(TooManyArguments, nil, "", 0, ""))
+	if len(args) > len(tv.Params) {
+		return EvalResult{Type: ResultError, Value: Value{Type: TypeError, Error: &ErrorValue{Code: TooManyArguments}}}
 	}
 
-	for idx, p := range params {
+	taskScope := NewScope(tv.Closure)
+	for idx, p := range tv.Params {
 		var val Value = Value{Type: TypeVoid}
 		if idx < len(args) {
 			val = args[idx]
 		} else if p.DefaultValue != nil {
-			val = i.Eval(p.DefaultValue.(Expr), scope)
+			res := i.evalInScope(p.DefaultValue.(Expr), taskScope)
+			if res.Type != ResultValue {
+				return res
+			}
+			val = res.Value
 		} else if !p.IsOptional {
-			panic(CreateHankError(MissingRequiredParameter, []interface{}{p.Name}, "", 0, ""))
+			return EvalResult{Type: ResultError, Value: Value{Type: TypeError, Error: &ErrorValue{Code: MissingRequiredParameter, Args: []Value{{Type: TypeString, String: p.Name}}}}}
 		}
-		scope.Set(p.Name, val)
+		taskScope.Set(p.Name, val)
 	}
+
+	bodyExpr := tv.Body.(Expr)
+	res := i.evalInScope(bodyExpr, taskScope)
+	if res.Type == ResultValue || res.Type == ResultReturn {
+		if res.Value.Type == TypeError {
+			return EvalResult{Type: ResultError, Value: res.Value}
+		}
+		return EvalResult{Type: ResultValue, Value: res.Value}
+	}
+	return res
+}
+
+func (i *Interpreter) Call(task Value, args []Value, scope Scope) Value {
+	finalArgs := args
+	if task.Type == TypeTask && !task.Task.IsNative {
+		if len(args) > len(task.Task.Params) {
+			finalArgs = args[:len(task.Task.Params)]
+		}
+	}
+	res := i.callInternal(task, finalArgs, scope)
+	switch res.Type {
+	case ResultValue, ResultReturn:
+		return res.Value
+	case ResultBreak:
+		return Value{Type: TypeOpaque, Opaque: &OpaqueValue{Label: "__ControlFlow", Data: "Break"}}
+	case ResultError:
+		return res.Value
+	}
+	return Value{Type: TypeVoid}
 }
 
 func (i *Interpreter) isTruthy(v Value) bool {
@@ -279,13 +368,15 @@ func (ctx *executionContextImpl) Eval(node any) Value {
 }
 
 func (ctx *executionContextImpl) Call(task Value, args []Value) Value {
-	finalArgs := args
-	if task.Type == TypeTask && !task.Task.IsNative {
-		if len(args) > len(task.Task.Params) {
-			finalArgs = args[:len(task.Task.Params)]
-		}
-	}
-	return ctx.interp.Call(task, finalArgs, ctx.scope)
+	return ctx.interp.Call(task, args, ctx.scope)
+}
+
+func (ctx *executionContextImpl) IsError(val Value) bool {
+	return ctx.interp.IsError(val)
+}
+
+func (ctx *executionContextImpl) GetLocalization() map[int]string {
+	return ctx.interp.GetLocalization()
 }
 
 func (ctx *executionContextImpl) Scope() Scope {

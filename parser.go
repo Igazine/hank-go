@@ -49,11 +49,7 @@ func (p *Parser) Parse() (Expr, error) {
 	if p.peek().Type == TokenLParen && p.isFuncDefStart() {
 		task, err = p.parseFuncDef()
 	} else if p.peek().Type == TokenLBrace {
-		body, err := p.parseBlock()
-		if err != nil {
-			return nil, err
-		}
-		task = &FuncDefExpr{Params: []Param{}, Body: body, Token: p.peekTd()}
+		task, err = p.parseBlock()
 	} else {
 		return nil, p.error(ExpectedMainTask)
 	}
@@ -118,13 +114,17 @@ func (p *Parser) parseFlowControl() (Expr, error) {
 		}
 		savedPos = p.pos
 		p.skipNewlines()
+	} else {
+		p.pos = savedPos
 	}
 
 	if !p.isEof() && p.peek().Type == TokenRescue {
 		p.consume(TokenRescue)
-		p.consume(TokenLParen)
-		catchVar = p.consumeIdentifier()
-		p.consume(TokenRParen)
+		if p.peek().Type == TokenLParen {
+			p.consume(TokenLParen)
+			catchVar = p.consumeIdentifier()
+			p.consume(TokenRParen)
+		}
 		rescue, err = p.parseBlock()
 		if err != nil {
 			return nil, err
@@ -144,7 +144,31 @@ func (p *Parser) parseFlowControl() (Expr, error) {
 }
 
 func (p *Parser) parseExpression() (Expr, error) {
-	return p.parsePrimary()
+	return p.parseAssignment()
+}
+
+func (p *Parser) parseAssignment() (Expr, error) {
+	expr, err := p.parsePrimary()
+	if err != nil {
+		return nil, err
+	}
+
+	if !p.isEof() && p.peek().Type == TokenAssign {
+		switch e := expr.(type) {
+		case *IdentExpr:
+			if !e.IsCore {
+				p.consume(TokenAssign)
+				val, err := p.parseExpression()
+				if err != nil {
+					return nil, err
+				}
+				return &AssignExpr{Name: e.Name, Value: val, Token: e.Token}, nil
+			}
+		}
+		return nil, p.error(InvalidAssignmentTarget)
+	}
+
+	return expr, nil
 }
 
 func (p *Parser) parsePrimary() (Expr, error) {
@@ -165,7 +189,7 @@ func (p *Parser) parsePrimary() (Expr, error) {
 			p.consume(TokenRParen)
 		}
 	case TokenLBrace:
-		expr, err = p.parseObjectLiteral()
+		expr, err = p.parseBlock()
 	case TokenNot:
 		p.pos++
 		target, err := p.parsePrimary()
@@ -173,30 +197,15 @@ func (p *Parser) parsePrimary() (Expr, error) {
 			return nil, err
 		}
 		expr = &UnOpExpr{Op: "!", Target: target, Token: td}
-	case TokenQuestion:
-		p.pos++
-		target, err := p.parsePrimary()
-		if err != nil {
-			return nil, err
-		}
-		expr = &UnOpExpr{Op: "?", Target: target, Token: td}
 	case TokenLBracket:
-		expr, err = p.parseArrayLiteral()
+		expr, err = p.parseCollectionLiteral()
 	case TokenHash:
 		p.pos++
 		name := p.consumeIdentifier()
 		expr = &IdentExpr{Name: name, IsCore: true, Token: td}
 	case TokenIdentifier:
-		id := p.consumeIdentifier()
-		if !p.isEof() && p.peek().Type == TokenAssign {
-			p.consume(TokenAssign)
-			val, err := p.parseExpression()
-			if err != nil {
-				return nil, err
-			}
-			return &AssignExpr{Name: id, Value: val, Token: td}, nil
-		}
-		expr = &IdentExpr{Name: id, IsCore: false, Token: td}
+		name := p.consumeIdentifier()
+		expr = &IdentExpr{Name: name, IsCore: false, Token: td}
 	case TokenString:
 		p.pos++
 		expr = &LiteralExpr{Value: Value{Type: TypeString, String: td.Literal}, Token: td}
@@ -204,6 +213,10 @@ func (p *Parser) parsePrimary() (Expr, error) {
 		p.pos++
 		val, _ := strconv.ParseFloat(td.Literal, 64)
 		expr = &LiteralExpr{Value: Value{Type: TypeNumber, Number: val}, Token: td}
+	case TokenCaret:
+		expr, err = p.parseReturn()
+	case TokenAt:
+		expr, err = p.parseInclude()
 	default:
 		return nil, p.error(UnexpectedToken, td.Type, td.Literal)
 	}
@@ -222,7 +235,7 @@ func (p *Parser) finishPrimary(expr Expr) (Expr, error) {
 		td := p.peekTd()
 		if td.Type == TokenDot {
 			p.consume(TokenDot)
-			expr = &FieldExpr{Object: expr, FieldName: p.consumeIdentifier(), Token: td}
+			expr = &FieldExpr{Collection: expr, FieldName: p.consumeIdentifier(), Token: td}
 		} else if td.Type == TokenLParen {
 			args, err := p.parseArgList()
 			if err != nil {
@@ -323,6 +336,103 @@ func (p *Parser) parseBlock() (Expr, error) {
 	return &BlockExpr{Statements: exprs, Token: td}, nil
 }
 
+func (p *Parser) parseCollectionLiteral() (Expr, error) {
+	td := p.consume(TokenLBracket)
+	p.skipNewlines()
+
+	// 1. Handle [:]
+	if p.peek().Type == TokenColon {
+		p.consume(TokenColon)
+		p.consume(TokenRBracket)
+		return &MapExpr{Fields: make(map[string]Expr), Token: td}, nil
+	}
+
+	// 2. Handle []
+	if p.peek().Type == TokenRBracket {
+		p.consume(TokenRBracket)
+		return &ArrayExpr{Items: []Expr{}, Token: td}, nil
+	}
+
+	// 3. Parse first element
+	first, err := p.parseExpression()
+	if err != nil {
+		return nil, err
+	}
+	p.skipNewlines()
+
+	if p.peek().Type == TokenColon {
+		// This is a Map
+		p.consume(TokenColon)
+		val, err := p.parseExpression()
+		if err != nil {
+			return nil, err
+		}
+		fields := make(map[string]Expr)
+		fields[p.getStaticKey(first)] = val
+
+		for {
+			p.skipNewlines()
+			if !p.isEof() && p.peek().Type == TokenComma {
+				p.consume(TokenComma)
+				p.skipNewlines()
+				if p.peek().Type == TokenRBracket {
+					break
+				}
+				keyExpr, err := p.parseExpression()
+				if err != nil {
+					return nil, err
+				}
+				p.consume(TokenColon)
+				valExpr, err := p.parseExpression()
+				if err != nil {
+					return nil, err
+				}
+				fields[p.getStaticKey(keyExpr)] = valExpr
+			} else {
+				break
+			}
+		}
+		p.consume(TokenRBracket)
+		return &MapExpr{Fields: fields, Token: td}, nil
+	} else {
+		// This is an Array
+		items := []Expr{first}
+		for {
+			p.skipNewlines()
+			if !p.isEof() && p.peek().Type == TokenComma {
+				p.consume(TokenComma)
+				p.skipNewlines()
+				if p.peek().Type == TokenRBracket {
+					break
+				}
+				item, err := p.parseExpression()
+				if err != nil {
+					return nil, err
+				}
+				items = append(items, item)
+			} else {
+				break
+			}
+		}
+		p.consume(TokenRBracket)
+		return &ArrayExpr{Items: items, Token: td}, nil
+	}
+}
+
+func (p *Parser) getStaticKey(e Expr) string {
+	switch expr := e.(type) {
+	case *LiteralExpr:
+		if expr.Value.Type == TypeString {
+			return expr.Value.String
+		}
+	case *IdentExpr:
+		if !expr.IsCore {
+			return expr.Name
+		}
+	}
+	panic(p.error(ExpectedIdentifier, p.peek().Type))
+}
+
 func (p *Parser) parseArgList() ([]Expr, error) {
 	p.consume(TokenLParen)
 	var args []Expr
@@ -353,58 +463,17 @@ func (p *Parser) parseArgList() ([]Expr, error) {
 	return args, nil
 }
 
-func (p *Parser) parseObjectLiteral() (Expr, error) {
-	td := p.consume(TokenLBrace)
-	fields := make(map[string]Expr)
-	for !p.isEof() && p.peek().Type != TokenRBrace {
-		p.skipNewlines()
-		if p.peek().Type == TokenRBrace {
-			break
-		}
-		key := p.consumeIdentifier()
-		p.consume(TokenColon)
-		val, err := p.parseExpression()
-		if err != nil {
-			return nil, err
-		}
-		fields[key] = val
-		if !p.isEof() && p.peek().Type == TokenComma {
-			p.consume(TokenComma)
-		}
-	}
-	p.consume(TokenRBrace)
-	return &ObjectExpr{Fields: fields, Token: td}, nil
-}
-
-func (p *Parser) parseArrayLiteral() (Expr, error) {
-	td := p.consume(TokenLBracket)
-	var items []Expr
-	for !p.isEof() && p.peek().Type != TokenRBracket {
-		p.skipNewlines()
-		if p.peek().Type == TokenRBracket {
-			break
-		}
-		item, err := p.parseExpression()
-		if err != nil {
-			return nil, err
-		}
-		items = append(items, item)
-		if !p.isEof() && p.peek().Type == TokenComma {
-			p.consume(TokenComma)
-		}
-	}
-	p.consume(TokenRBracket)
-	return &ArrayExpr{Items: items, Token: td}, nil
-}
-
 func (p *Parser) parseReturn() (Expr, error) {
 	td := p.consume(TokenCaret)
 	var val Expr
-	if !p.isEof() && p.peek().Type != TokenNewline && p.peek().Type != TokenRBrace && p.peek().Type != TokenRBracket && p.peek().Type != TokenComma {
-		var err error
-		val, err = p.parseExpression()
-		if err != nil {
-			return nil, err
+	if !p.isEof() {
+		next := p.peek().Type
+		if next != TokenNewline && next != TokenRBrace && next != TokenRBracket && next != TokenComma && next != TokenRParen {
+			var err error
+			val, err = p.parseExpression()
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 	return &UnOpExpr{Op: "^", Target: val, Token: td}, nil

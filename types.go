@@ -7,19 +7,21 @@ const (
 	TypeNumber
 	TypeString
 	TypeArray
-	TypeObject
+	TypeMap
 	TypeOpaque
 	TypeTask
+	TypeError
 )
 
 type Value struct {
 	Type   ValueType
 	Number float64
 	String string
-	Array  []Value
-	Object map[string]Value
+	Array  *[]Value
+	Map    map[string]Value
 	Opaque *OpaqueValue
 	Task   *TaskValue
+	Error  *ErrorValue
 }
 
 type OpaqueValue struct {
@@ -48,6 +50,8 @@ type ExecutionContext interface {
 	Parse(source string) (any, error)
 	Eval(node any) Value
 	Call(task Value, args []Value) Value
+	IsError(val Value) bool
+	GetLocalization() map[int]string
 	Scope() Scope
 }
 
@@ -104,7 +108,13 @@ const (
 	Halt                     HankError = 4004
 	BitwiseOutOfBounds       HankError = 4005
 	GenericRuntimeError      HankError = 4006
+	TypeMismatch             HankError = 4007
 )
+
+type ErrorValue struct {
+	Code HankError
+	Args []Value
+}
 
 type HankErrorValue struct {
 	Code    HankError

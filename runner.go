@@ -12,12 +12,23 @@ import (
 type Runner struct {
 	resourceCache map[string]Resource
 	coreScope     Scope
+	localization  map[int]string
 }
 
 func NewRunner() *Runner {
 	return &Runner{
 		resourceCache: make(map[string]Resource),
 		coreScope:     NewScope(nil),
+		localization:  make(map[int]string),
+	}
+}
+
+/**
+ * Registers a localization map (Code -> Template).
+ */
+func (r *Runner) RegisterLocalization(m map[int]string) {
+	for k, v := range m {
+		r.localization[k] = v
 	}
 }
 
@@ -33,7 +44,7 @@ func (r *Runner) RegisterModule(name string, tasks map[string]NativeFunc) {
 			},
 		}
 	}
-	r.coreScope.Set(name, Value{Type: TypeObject, Object: moduleObj})
+	r.coreScope.Set(name, Value{Type: TypeMap, Map: moduleObj})
 }
 
 func (r *Runner) RegisterExtension(ext HankExtension) {
@@ -75,10 +86,6 @@ func (r *Runner) Load(resource Resource, stack []string) (Expr, error) {
 		return nil, err
 	}
 
-	if cached.Content() == "" && cached.ID() != "" {
-		// Note: Empty file is allowed, but we check if load actually happened
-	}
-
 	newStack := append(stack, cached.ID())
 
 	lexer := NewLexer(cached.Content())
@@ -115,13 +122,16 @@ func (r *Runner) Run(resource Resource, args []Value) (Value, error) {
 		return Value{Type: TypeVoid}, err
 	}
 
-	interp := NewInterpreter(nil, r.coreScope)
+	interp := NewInterpreter(nil, r.coreScope, r.localization)
 	scriptTask, err := interp.Run(ast)
 	if err != nil {
 		return Value{Type: TypeVoid}, err
 	}
 
 	if scriptTask.Type != TypeTask {
+		if scriptTask.Type == TypeError {
+			return scriptTask, nil
+		}
 		return Value{Type: TypeVoid}, CreateHankError(ScriptMustBeTask, nil, "", 0, "")
 	}
 

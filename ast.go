@@ -28,9 +28,9 @@ type IdentExpr struct {
 }
 
 type FieldExpr struct {
-	Object    Expr
-	FieldName string
-	Token     Token
+	Collection Expr
+	FieldName  string
+	Token      Token
 }
 
 type FuncDefExpr struct {
@@ -51,7 +51,7 @@ type UnOpExpr struct {
 	Token  Token
 }
 
-type ObjectExpr struct {
+type MapExpr struct {
 	Fields map[string]Expr
 	Token  Token
 }
@@ -70,6 +70,12 @@ type FlowControlExpr struct {
 	Token         Token
 }
 
+type ErrorExpr struct {
+	Code HankError
+	Args []Expr
+	Token Token
+}
+
 // Marker methods
 func (e *BlockExpr) isExpr()       {}
 func (e *AssignExpr) isExpr()      {}
@@ -79,9 +85,10 @@ func (e *FieldExpr) isExpr()       {}
 func (e *FuncDefExpr) isExpr()     {}
 func (e *FuncCallExpr) isExpr()    {}
 func (e *UnOpExpr) isExpr()        {}
-func (e *ObjectExpr) isExpr()      {}
+func (e *MapExpr) isExpr()         {}
 func (e *ArrayExpr) isExpr()       {}
 func (e *FlowControlExpr) isExpr() {}
+func (e *ErrorExpr) isExpr()       {}
 
 func (e *BlockExpr) GetTokenData() Token       { return e.Token }
 func (e *AssignExpr) GetTokenData() Token      { return e.Token }
@@ -91,6 +98,7 @@ func (e *FieldExpr) GetTokenData() Token       { return e.Token }
 func (e *FuncDefExpr) GetTokenData() Token     { return e.Token }
 func (e *FuncCallExpr) GetTokenData() Token    { return e.Token }
 func (e *UnOpExpr) GetTokenData() Token        { return e.Token }
-func (e *ObjectExpr) GetTokenData() Token      { return e.Token }
+func (e *MapExpr) GetTokenData() Token         { return e.Token }
 func (e *ArrayExpr) GetTokenData() Token       { return e.Token }
 func (e *FlowControlExpr) GetTokenData() Token { return e.Token }
+func (e *ErrorExpr) GetTokenData() Token       { return e.Token }

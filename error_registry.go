@@ -2,6 +2,7 @@ package hank
 
 import (
 	"fmt"
+	"strings"
 )
 
 var HankErrorMessages = map[HankError]string{
@@ -24,6 +25,7 @@ var HankErrorMessages = map[HankError]string{
 	Halt:                          "HANK_HALT:%v",
 	BitwiseOutOfBounds:            "Value exceeds safe integer bounds for bitwise operation: %v",
 	GenericRuntimeError:           "%v",
+	TypeMismatch:                  "Type Mismatch: Expected %v, got %v in %v",
 }
 
 func CreateHankError(code HankError, args []interface{}, filename string, line int, lineText string) *HankErrorValue {
@@ -32,7 +34,18 @@ func CreateHankError(code HankError, args []interface{}, filename string, line i
 		tmpl = "Unknown Error"
 	}
 
-	msg := fmt.Sprintf(tmpl, args...)
+	// Handle %v vs {i} mapping if needed, but for internal Go errors we use %v
+	msg := tmpl
+	for i, arg := range args {
+		placeholder := fmt.Sprintf("{%d}", i)
+		if strings.Contains(msg, placeholder) {
+			msg = strings.ReplaceAll(msg, placeholder, fmt.Sprintf("%v", arg))
+		}
+	}
+	// Fallback to fmt.Sprintf if placeholders weren't replaced
+	if strings.Contains(msg, "%") {
+		msg = fmt.Sprintf(msg, args...)
+	}
 
 	if filename != "" {
 		msg = fmt.Sprintf("ERROR: %s in %s at\n\t%d:\t%s", msg, filename, line, lineText)

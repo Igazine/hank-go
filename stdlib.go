@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type StdLib struct{}
@@ -31,21 +32,21 @@ func hankEquals(a, b Value) bool {
 	case TypeString:
 		return a.String == b.String
 	case TypeArray:
-		if len(a.Array) != len(b.Array) {
+		if len(*a.Array) != len(*b.Array) {
 			return false
 		}
-		for i := range a.Array {
-			if !hankEquals(a.Array[i], b.Array[i]) {
+		for i := range *a.Array {
+			if !hankEquals((*a.Array)[i], (*b.Array)[i]) {
 				return false
 			}
 		}
 		return true
-	case TypeObject:
-		if len(a.Object) != len(b.Object) {
+	case TypeMap:
+		if len(a.Map) != len(b.Map) {
 			return false
 		}
-		for k, v1 := range a.Object {
-			v2, ok := b.Object[k]
+		for k, v1 := range a.Map {
+			v2, ok := b.Map[k]
 			if !ok || !hankEquals(v1, v2) {
 				return false
 			}
@@ -53,6 +54,16 @@ func hankEquals(a, b Value) bool {
 		return true
 	case TypeOpaque:
 		return a.Opaque.Label == b.Opaque.Label && a.Opaque.Data == b.Opaque.Data
+	case TypeError:
+		if a.Error.Code != b.Error.Code || len(a.Error.Args) != len(b.Error.Args) {
+			return false
+		}
+		for i := range a.Error.Args {
+			if !hankEquals(a.Error.Args[i], b.Error.Args[i]) {
+				return false
+			}
+		}
+		return true
 	default:
 		return false
 	}
@@ -94,11 +105,11 @@ func GetStdlibModules() map[string]map[string]NativeFunc {
 			if len(args) > 0 && args[0].Type == TypeNumber {
 				code = int(args[0].Number)
 			}
-			fmt.Printf("Exiting with code %d\n", code)
+			os.Exit(code)
 			return Value{Type: TypeVoid}
 		},
 		"elapsedTime": func(args []Value, ctx ExecutionContext) Value {
-			return Value{Type: TypeNumber, Number: 0}
+			return Value{Type: TypeNumber, Number: float64(time.Now().UnixNano() / 1e6)}
 		},
 		"signal": func(args []Value, ctx ExecutionContext) Value {
 			if len(args) > 0 {
@@ -106,36 +117,49 @@ func GetStdlibModules() map[string]map[string]NativeFunc {
 			}
 			return Value{Type: TypeVoid}
 		},
+	}
+
+	mods["loop"] = map[string]NativeFunc{
 		"while": func(args []Value, ctx ExecutionContext) Value {
 			if len(args) < 2 {
 				return Value{Type: TypeVoid}
 			}
 			cond := args[0]
 			body := args[1]
-			var last Value
+			var last Value = Value{Type: TypeVoid}
 			for {
 				condVal := ctx.Call(cond, []Value{})
+				if ctx.IsError(condVal) {
+					return condVal
+				}
 				if condVal.Type == TypeVoid {
 					break
 				}
-				last = ctx.Call(body, []Value{})
+				res := ctx.Call(body, []Value{})
+				if res.Type == TypeOpaque && res.Opaque.Label == "__ControlFlow" && fmt.Sprintf("%v", res.Opaque.Data) == "Break" {
+					break
+				}
+				if ctx.IsError(res) {
+					return res
+				}
+				last = res
 			}
 			return last
+		},
+		"break": func(args []Value, ctx ExecutionContext) Value {
+			return Value{Type: TypeOpaque, Opaque: &OpaqueValue{Label: "__ControlFlow", Data: "Break"}}
 		},
 	}
 
 	mods["env"] = map[string]NativeFunc{
 		"get": func(args []Value, ctx ExecutionContext) Value {
-			if len(args) == 0 {
-				return Value{Type: TypeVoid}
-			}
 			return Value{Type: TypeVoid}
 		},
 		"set": func(args []Value, ctx ExecutionContext) Value {
 			return Value{Type: TypeVoid}
 		},
 		"keys": func(args []Value, ctx ExecutionContext) Value {
-			return Value{Type: TypeArray, Array: []Value{}}
+			return Value{Type: TypeArray, Array: &[]Value{}}
 		},
 	}
 
@@ -144,7 +168,10 @@ func GetStdlibModules() map[string]map[string]NativeFunc {
 			if len(args) == 0 {
 				return Value{Type: TypeVoid}
 			}
-			return Value{Type: TypeNumber, Number: float64(len(ValueToString(args[0])))}
+			if args[0].Type != TypeString {
+				return Value{Type: TypeError, Error: &ErrorValue{Code: TypeMismatch, Args: []Value{{Type: TypeString, String: "String"}, {Type: TypeString, String: typeToString(args[0].Type)}, {Type: TypeString, String: "str.length"}}}}
+			}
+			return Value{Type: TypeNumber, Number: float64(len(args[0].String))}
 		},
 		"format": func(args []Value, ctx ExecutionContext) Value {
 			if len(args) == 0 {
@@ -169,7 +196,10 @@ func GetStdlibModules() map[string]map[string]NativeFunc {
 			if len(args) == 0 {
 				return Value{Type: TypeVoid}
 			}
-			return Value{Type: TypeString, String: strings.TrimSpace(ValueToString(args[0]))}
+			if args[0].Type != TypeString {
+				return Value{Type: TypeError, Error: &ErrorValue{Code: TypeMismatch, Args: []Value{{Type: TypeString, String: "String"}, {Type: TypeString, String: typeToString(args[0].Type)}, {Type: TypeString, String: "str.trim"}}}}
+			}
+			return Value{Type: TypeString, String: strings.TrimSpace(args[0].String)}
 		},
 	}
 
@@ -185,7 +215,6 @@ func GetStdlibModules() map[string]map[string]NativeFunc {
 			}
 			val, err := strconv.ParseInt(s, base, 64)
 			if err != nil {
-				// Try parsing as float if base is 0 or 10
 				if base == 0 || base == 10 {
 					fval, err := strconv.ParseFloat(s, 64)
 					if err == nil {
@@ -237,13 +266,7 @@ func GetStdlibModules() map[string]map[string]NativeFunc {
 			if err != nil {
 				return Value{Type: TypeVoid}
 			}
-			return Value{
-				Type: TypeOpaque,
-				Opaque: &OpaqueValue{
-					Label: "RegExp",
-					Data:  re,
-				},
-			}
+			return Value{Type: TypeOpaque, Opaque: &OpaqueValue{Label: "RegExp", Data: re}}
 		},
 		"match": func(args []Value, ctx ExecutionContext) Value {
 			if len(args) < 2 {
@@ -269,15 +292,22 @@ func GetStdlibModules() map[string]map[string]NativeFunc {
 		"add": func(args []Value, ctx ExecutionContext) Value {
 			res := 0.0
 			for _, a := range args {
-				if a.Type == TypeNumber {
-					res += a.Number
+				if a.Type != TypeNumber {
+					return Value{Type: TypeError, Error: &ErrorValue{Code: TypeMismatch, Args: []Value{{Type: TypeString, String: "Number"}, {Type: TypeString, String: typeToString(a.Type)}, {Type: TypeString, String: "math.add"}}}}
 				}
+				res += a.Number
 			}
 			return Value{Type: TypeNumber, Number: res}
 		},
 		"sub": func(args []Value, ctx ExecutionContext) Value {
 			if len(args) < 2 {
 				return Value{Type: TypeVoid}
+			}
+			if args[0].Type != TypeNumber {
+				return Value{Type: TypeError, Error: &ErrorValue{Code: TypeMismatch, Args: []Value{{Type: TypeString, String: "Number"}, {Type: TypeString, String: typeToString(args[0].Type)}, {Type: TypeString, String: "math.sub"}}}}
+			}
+			if args[1].Type != TypeNumber {
+				return Value{Type: TypeError, Error: &ErrorValue{Code: TypeMismatch, Args: []Value{{Type: TypeString, String: "Number"}, {Type: TypeString, String: typeToString(args[1].Type)}, {Type: TypeString, String: "math.sub"}}}}
 			}
 			return Value{Type: TypeNumber, Number: args[0].Number - args[1].Number}
 		},
@@ -287,14 +317,24 @@ func GetStdlibModules() map[string]map[string]NativeFunc {
 				return Value{Type: TypeNumber, Number: 0}
 			}
 			for _, a := range args {
-				if a.Type == TypeNumber {
-					res *= a.Number
+				if a.Type != TypeNumber {
+					return Value{Type: TypeError, Error: &ErrorValue{Code: TypeMismatch, Args: []Value{{Type: TypeString, String: "Number"}, {Type: TypeString, String: typeToString(a.Type)}, {Type: TypeString, String: "math.mul"}}}}
 				}
+				res *= a.Number
 			}
 			return Value{Type: TypeNumber, Number: res}
 		},
 		"div": func(args []Value, ctx ExecutionContext) Value {
-			if len(args) < 2 || args[1].Number == 0 {
+			if len(args) < 2 {
+				return Value{Type: TypeVoid}
+			}
+			if args[0].Type != TypeNumber {
+				return Value{Type: TypeError, Error: &ErrorValue{Code: TypeMismatch, Args: []Value{{Type: TypeString, String: "Number"}, {Type: TypeString, String: typeToString(args[0].Type)}, {Type: TypeString, String: "math.div"}}}}
+			}
+			if args[1].Type != TypeNumber {
+				return Value{Type: TypeError, Error: &ErrorValue{Code: TypeMismatch, Args: []Value{{Type: TypeString, String: "Number"}, {Type: TypeString, String: typeToString(args[1].Type)}, {Type: TypeString, String: "math.div"}}}}
+			}
+			if args[1].Number == 0 {
 				return Value{Type: TypeVoid}
 			}
 			return Value{Type: TypeNumber, Number: args[0].Number / args[1].Number}
@@ -302,6 +342,12 @@ func GetStdlibModules() map[string]map[string]NativeFunc {
 		"gt": func(args []Value, ctx ExecutionContext) Value {
 			if len(args) < 2 {
 				return Value{Type: TypeVoid}
+			}
+			if args[0].Type != TypeNumber {
+				return Value{Type: TypeError, Error: &ErrorValue{Code: TypeMismatch, Args: []Value{{Type: TypeString, String: "Number"}, {Type: TypeString, String: typeToString(args[0].Type)}, {Type: TypeString, String: "math.gt"}}}}
+			}
+			if args[1].Type != TypeNumber {
+				return Value{Type: TypeError, Error: &ErrorValue{Code: TypeMismatch, Args: []Value{{Type: TypeString, String: "Number"}, {Type: TypeString, String: typeToString(args[1].Type)}, {Type: TypeString, String: "math.gt"}}}}
 			}
 			if args[0].Number > args[1].Number {
 				return Value{Type: TypeNumber, Number: 1}
@@ -311,6 +357,12 @@ func GetStdlibModules() map[string]map[string]NativeFunc {
 		"lt": func(args []Value, ctx ExecutionContext) Value {
 			if len(args) < 2 {
 				return Value{Type: TypeVoid}
+			}
+			if args[0].Type != TypeNumber {
+				return Value{Type: TypeError, Error: &ErrorValue{Code: TypeMismatch, Args: []Value{{Type: TypeString, String: "Number"}, {Type: TypeString, String: typeToString(args[0].Type)}, {Type: TypeString, String: "math.lt"}}}}
+			}
+			if args[1].Type != TypeNumber {
+				return Value{Type: TypeError, Error: &ErrorValue{Code: TypeMismatch, Args: []Value{{Type: TypeString, String: "Number"}, {Type: TypeString, String: typeToString(args[1].Type)}, {Type: TypeString, String: "math.lt"}}}}
 			}
 			if args[0].Number < args[1].Number {
 				return Value{Type: TypeNumber, Number: 1}
@@ -333,7 +385,7 @@ func GetStdlibModules() map[string]map[string]NativeFunc {
 			if len(args) == 0 {
 				return Value{Type: TypeVoid}
 			}
-			var last Value
+			var last Value = Value{Type: TypeVoid}
 			for _, a := range args {
 				if a.Type == TypeVoid {
 					return Value{Type: TypeVoid}
@@ -363,70 +415,111 @@ func GetStdlibModules() map[string]map[string]NativeFunc {
 
 	mods["arr"] = map[string]NativeFunc{
 		"length": func(args []Value, ctx ExecutionContext) Value {
-			if len(args) == 0 || args[0].Type != TypeArray {
+			if len(args) == 0 {
 				return Value{Type: TypeVoid}
 			}
-			return Value{Type: TypeNumber, Number: float64(len(args[0].Array))}
+			if args[0].Type != TypeArray {
+				return Value{Type: TypeError, Error: &ErrorValue{Code: TypeMismatch, Args: []Value{{Type: TypeString, String: "Array"}, {Type: TypeString, String: typeToString(args[0].Type)}, {Type: TypeString, String: "arr.length"}}}}
+			}
+			return Value{Type: TypeNumber, Number: float64(len(*args[0].Array))}
 		},
 		"get": func(args []Value, ctx ExecutionContext) Value {
-			if len(args) < 2 || args[0].Type != TypeArray || args[1].Type != TypeNumber {
+			if len(args) < 2 {
 				return Value{Type: TypeVoid}
+			}
+			if args[0].Type != TypeArray {
+				return Value{Type: TypeError, Error: &ErrorValue{Code: TypeMismatch, Args: []Value{{Type: TypeString, String: "Array"}, {Type: TypeString, String: typeToString(args[0].Type)}, {Type: TypeString, String: "arr.get"}}}}
+			}
+			if args[1].Type != TypeNumber {
+				return Value{Type: TypeError, Error: &ErrorValue{Code: TypeMismatch, Args: []Value{{Type: TypeString, String: "Number"}, {Type: TypeString, String: typeToString(args[1].Type)}, {Type: TypeString, String: "arr.get"}}}}
 			}
 			idx := int(args[1].Number)
-			if idx < 0 || idx >= len(args[0].Array) {
+			if idx < 0 || idx >= len(*args[0].Array) {
 				return Value{Type: TypeVoid}
 			}
-			return args[0].Array[idx]
+			return (*args[0].Array)[idx]
 		},
 		"push": func(args []Value, ctx ExecutionContext) Value {
-			if len(args) < 2 || args[0].Type != TypeArray {
+			if len(args) < 2 {
 				return Value{Type: TypeVoid}
 			}
-			args[0].Array = append(args[0].Array, args[1])
+			if args[0].Type != TypeArray {
+				return Value{Type: TypeError, Error: &ErrorValue{Code: TypeMismatch, Args: []Value{{Type: TypeString, String: "Array"}, {Type: TypeString, String: typeToString(args[0].Type)}, {Type: TypeString, String: "arr.push"}}}}
+			}
+			*args[0].Array = append(*args[0].Array, args[1])
 			return Value{Type: TypeVoid}
 		},
 		"pop": func(args []Value, ctx ExecutionContext) Value {
-			if len(args) == 0 || args[0].Type != TypeArray || len(args[0].Array) == 0 {
+			if len(args) == 0 {
 				return Value{Type: TypeVoid}
 			}
-			idx := len(args[0].Array) - 1
-			val := args[0].Array[idx]
-			args[0].Array = args[0].Array[:idx]
+			if args[0].Type != TypeArray {
+				return Value{Type: TypeError, Error: &ErrorValue{Code: TypeMismatch, Args: []Value{{Type: TypeString, String: "Array"}, {Type: TypeString, String: typeToString(args[0].Type)}, {Type: TypeString, String: "arr.pop"}}}}
+			}
+			if len(*args[0].Array) == 0 {
+				return Value{Type: TypeVoid}
+			}
+			idx := len(*args[0].Array) - 1
+			val := (*args[0].Array)[idx]
+			*args[0].Array = (*args[0].Array)[:idx]
 			return val
 		},
 		"each": func(args []Value, ctx ExecutionContext) Value {
-			if len(args) < 2 || args[0].Type != TypeArray || args[1].Type != TypeTask {
+			if len(args) < 2 {
 				return Value{Type: TypeVoid}
 			}
-			items := make([]Value, len(args[0].Array))
-			copy(items, args[0].Array)
+			if args[0].Type != TypeArray {
+				return Value{Type: TypeError, Error: &ErrorValue{Code: TypeMismatch, Args: []Value{{Type: TypeString, String: "Array"}, {Type: TypeString, String: typeToString(args[0].Type)}, {Type: TypeString, String: "arr.each"}}}}
+			}
+			items := make([]Value, len(*args[0].Array))
+			copy(items, *args[0].Array)
 			for idx, item := range items {
-				ctx.Call(args[1], []Value{item, {Type: TypeNumber, Number: float64(idx)}})
+				res := ctx.Call(args[1], []Value{item, {Type: TypeNumber, Number: float64(idx)}})
+				if res.Type == TypeOpaque && res.Opaque.Label == "__ControlFlow" && fmt.Sprintf("%v", res.Opaque.Data) == "Break" {
+					break
+				}
+				if ctx.IsError(res) {
+					return res
+				}
 			}
 			return Value{Type: TypeVoid}
 		},
 	}
 
-	mods["obj"] = map[string]NativeFunc{
+	mods["map"] = map[string]NativeFunc{
 		"get": func(args []Value, ctx ExecutionContext) Value {
-			if len(args) < 2 || args[0].Type != TypeObject {
+			if len(args) < 2 {
+				return Value{Type: TypeVoid}
+			}
+			if args[0].Type != TypeMap {
 				return Value{Type: TypeVoid}
 			}
 			key := ValueToString(args[1])
-			if val, ok := args[0].Object[key]; ok {
+			if val, ok := args[0].Map[key]; ok {
 				return val
 			}
 			return Value{Type: TypeVoid}
 		},
+		"set": func(args []Value, ctx ExecutionContext) Value {
+			if len(args) < 3 {
+				return Value{Type: TypeVoid}
+			}
+			if args[0].Type != TypeMap {
+				return Value{Type: TypeError, Error: &ErrorValue{Code: TypeMismatch, Args: []Value{{Type: TypeString, String: "Map"}, {Type: TypeString, String: typeToString(args[0].Type)}, {Type: TypeString, String: "map.set"}}}}
+			}
+			key := ValueToString(args[1])
+			args[0].Map[key] = args[2]
+			return Value{Type: TypeVoid}
+		},
 		"keys": func(args []Value, ctx ExecutionContext) Value {
-			if len(args) == 0 || args[0].Type != TypeObject {
+			if len(args) == 0 || args[0].Type != TypeMap {
 				return Value{Type: TypeVoid}
 			}
 			var keys []Value
-			for k := range args[0].Object {
+			for k := range args[0].Map {
 				keys = append(keys, Value{Type: TypeString, String: k})
 			}
-			return Value{Type: TypeArray, Array: keys}
+			return Value{Type: TypeArray, Array: &keys}
 		},
 	}
 
@@ -446,7 +539,6 @@ func GetStdlibModules() map[string]map[string]NativeFunc {
 			if len(args) == 0 {
 				return Value{Type: TypeVoid}
 			}
-			// Check for Opaque values
 			any, ok := mapHankToAny(args[0])
 			if !ok {
 				return Value{Type: TypeVoid}
@@ -456,6 +548,51 @@ func GetStdlibModules() map[string]map[string]NativeFunc {
 				return Value{Type: TypeVoid}
 			}
 			return Value{Type: TypeString, String: string(b)}
+		},
+	}
+
+	mods["err"] = map[string]NativeFunc{
+		"code": func(args []Value, ctx ExecutionContext) Value {
+			if len(args) == 0 {
+				return Value{Type: TypeVoid}
+			}
+			if args[0].Type != TypeError {
+				return Value{Type: TypeError, Error: &ErrorValue{Code: TypeMismatch, Args: []Value{{Type: TypeString, String: "Error"}, {Type: TypeString, String: typeToString(args[0].Type)}, {Type: TypeString, String: "err.code"}}}}
+			}
+			return Value{Type: TypeNumber, Number: float64(args[0].Error.Code)}
+		},
+		"message": func(args []Value, ctx ExecutionContext) Value {
+			if len(args) == 0 {
+				return Value{Type: TypeVoid}
+			}
+			if args[0].Type != TypeError {
+				return Value{Type: TypeError, Error: &ErrorValue{Code: TypeMismatch, Args: []Value{{Type: TypeString, String: "Error"}, {Type: TypeString, String: typeToString(args[0].Type)}, {Type: TypeString, String: "err.message"}}}}
+			}
+			err := args[0].Error
+			loc := ctx.GetLocalization()
+			tmpl, ok := loc[int(err.Code)]
+			if !ok {
+				tmpl = "Unknown Error"
+			}
+			for i, arg := range err.Args {
+				tmpl = strings.ReplaceAll(tmpl, fmt.Sprintf("{%d}", i), ValueToString(arg))
+			}
+			return Value{Type: TypeString, String: tmpl}
+		},
+		"args": func(args []Value, ctx ExecutionContext) Value {
+			if len(args) == 0 {
+				return Value{Type: TypeVoid}
+			}
+			if args[0].Type != TypeError {
+				return Value{Type: TypeError, Error: &ErrorValue{Code: TypeMismatch, Args: []Value{{Type: TypeString, String: "Error"}, {Type: TypeString, String: typeToString(args[0].Type)}, {Type: TypeString, String: "err.args"}}}}
+			}
+			return Value{Type: TypeArray, Array: &args[0].Error.Args}
+		},
+		"isError": func(args []Value, ctx ExecutionContext) Value {
+			if len(args) > 0 && args[0].Type == TypeError {
+				return Value{Type: TypeNumber, Number: 1}
+			}
+			return Value{Type: TypeVoid}
 		},
 	}
 
@@ -482,17 +619,17 @@ func mapAnyToHank(v interface{}) Value {
 		}
 		return Value{Type: TypeVoid}
 	case []interface{}:
-		var arr []Value
+		arr := make([]Value, 0, len(val))
 		for _, item := range val {
 			arr = append(arr, mapAnyToHank(item))
 		}
-		return Value{Type: TypeArray, Array: arr}
+		return Value{Type: TypeArray, Array: &arr}
 	case map[string]interface{}:
-		obj := make(map[string]Value)
+		m := make(map[string]Value)
 		for k, v := range val {
-			obj[k] = mapAnyToHank(v)
+			m[k] = mapAnyToHank(v)
 		}
-		return Value{Type: TypeObject, Object: obj}
+		return Value{Type: TypeMap, Map: m}
 	default:
 		return Value{Type: TypeVoid}
 	}
@@ -506,7 +643,7 @@ func mapHankToAny(v Value) (interface{}, bool) {
 		return v.Number, true
 	case TypeArray:
 		var arr []interface{}
-		for _, item := range v.Array {
+		for _, item := range *v.Array {
 			any, ok := mapHankToAny(item)
 			if !ok {
 				return nil, false
@@ -514,20 +651,43 @@ func mapHankToAny(v Value) (interface{}, bool) {
 			arr = append(arr, any)
 		}
 		return arr, true
-	case TypeObject:
-		obj := make(map[string]interface{})
-		for k, val := range v.Object {
+	case TypeMap:
+		m := make(map[string]interface{})
+		for k, val := range v.Map {
 			any, ok := mapHankToAny(val)
 			if !ok {
 				return nil, false
 			}
-			obj[k] = any
+			m[k] = any
 		}
-		return obj, true
+		return m, true
 	case TypeOpaque:
 		return nil, false // Non-serializable
 	default:
 		return nil, true
+	}
+}
+
+func typeToString(t ValueType) string {
+	switch t {
+	case TypeVoid:
+		return "Void"
+	case TypeNumber:
+		return "Number"
+	case TypeString:
+		return "String"
+	case TypeArray:
+		return "Array"
+	case TypeMap:
+		return "Map"
+	case TypeOpaque:
+		return "Opaque"
+	case TypeTask:
+		return "Task"
+	case TypeError:
+		return "Error"
+	default:
+		return "Unknown"
 	}
 }
 
@@ -536,15 +696,21 @@ func ValueToString(v Value) string {
 	case TypeString:
 		return v.String
 	case TypeNumber:
-		return fmt.Sprintf("%g", v.Number)
+		s := fmt.Sprintf("%g", v.Number)
+		if strings.HasSuffix(s, ".0") {
+			s = s[:len(s)-2]
+		}
+		return s
 	case TypeArray:
 		return "[Array]"
-	case TypeObject:
-		return "{Object}"
+	case TypeMap:
+		return "[Map]"
 	case TypeOpaque:
 		return fmt.Sprintf("[Opaque:%s]", v.Opaque.Label)
 	case TypeTask:
 		return "[Task]"
+	case TypeError:
+		return fmt.Sprintf("[Error:%d]", v.Error.Code)
 	case TypeVoid:
 		return "Void"
 	default:

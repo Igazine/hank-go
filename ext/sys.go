@@ -45,11 +45,11 @@ func (e *SysExtension) GetModules() map[string]map[string]hank.NativeFunc {
 		"memory": func(args []hank.Value, ctx hank.ExecutionContext) hank.Value {
 			var m runtime.MemStats
 			runtime.ReadMemStats(&m)
-			obj := make(map[string]hank.Value)
-			obj["total"] = hank.Value{Type: hank.TypeNumber, Number: float64(m.Sys)}
-			obj["free"] = hank.Value{Type: hank.TypeNumber, Number: float64(m.HeapIdle)}
-			obj["used"] = hank.Value{Type: hank.TypeNumber, Number: float64(m.Alloc)}
-			return hank.Value{Type: hank.TypeObject, Object: obj}
+			fields := make(map[string]hank.Value)
+			fields["total"] = hank.Value{Type: hank.TypeNumber, Number: float64(m.Sys)}
+			fields["free"] = hank.Value{Type: hank.TypeNumber, Number: float64(m.HeapIdle)}
+			fields["used"] = hank.Value{Type: hank.TypeNumber, Number: float64(m.Alloc)}
+			return hank.Value{Type: hank.TypeMap, Map: fields}
 		},
 		"cpu": func(args []hank.Value, ctx hank.ExecutionContext) hank.Value {
 			return hank.Value{Type: hank.TypeNumber, Number: 0}
@@ -58,14 +58,22 @@ func (e *SysExtension) GetModules() map[string]map[string]hank.NativeFunc {
 
 	mods["fs"] = map[string]hank.NativeFunc{
 		"exists": func(args []hank.Value, ctx hank.ExecutionContext) hank.Value {
-			path := hank.ValueToString(args[0])
+			if len(args) == 0 { return hank.Value{Type: hank.TypeVoid} }
+			if args[0].Type != hank.TypeString {
+				return hank.Value{Type: hank.TypeError, Error: &hank.ErrorValue{Code: hank.TypeMismatch, Args: []hank.Value{{Type: hank.TypeString, String: "String"}, {Type: hank.TypeString, String: "Any"}, {Type: hank.TypeString, String: "fs.exists"}}}}
+			}
+			path := args[0].String
 			if _, err := os.Stat(path); err == nil {
 				return hank.Value{Type: hank.TypeNumber, Number: 1}
 			}
 			return hank.Value{Type: hank.TypeVoid}
 		},
 		"read": func(args []hank.Value, ctx hank.ExecutionContext) hank.Value {
-			path := hank.ValueToString(args[0])
+			if len(args) == 0 { return hank.Value{Type: hank.TypeVoid} }
+			if args[0].Type != hank.TypeString {
+				return hank.Value{Type: hank.TypeError, Error: &hank.ErrorValue{Code: hank.TypeMismatch, Args: []hank.Value{{Type: hank.TypeString, String: "String"}, {Type: hank.TypeString, String: "Any"}, {Type: hank.TypeString, String: "fs.read"}}}}
+			}
+			path := args[0].String
 			content, err := os.ReadFile(path)
 			if err != nil {
 				return hank.Value{Type: hank.TypeVoid}
@@ -73,44 +81,63 @@ func (e *SysExtension) GetModules() map[string]map[string]hank.NativeFunc {
 			return hank.Value{Type: hank.TypeString, String: string(content)}
 		},
 		"write": func(args []hank.Value, ctx hank.ExecutionContext) hank.Value {
-			path := hank.ValueToString(args[0])
-			content := hank.ValueToString(args[1])
+			if len(args) < 2 { return hank.Value{Type: hank.TypeVoid} }
+			if args[0].Type != hank.TypeString {
+				return hank.Value{Type: hank.TypeError, Error: &hank.ErrorValue{Code: hank.TypeMismatch, Args: []hank.Value{{Type: hank.TypeString, String: "String"}, {Type: hank.TypeString, String: "Any"}, {Type: hank.TypeString, String: "fs.write"}}}}
+			}
+			if args[1].Type != hank.TypeString {
+				return hank.Value{Type: hank.TypeError, Error: &hank.ErrorValue{Code: hank.TypeMismatch, Args: []hank.Value{{Type: hank.TypeString, String: "String"}, {Type: hank.TypeString, String: "Any"}, {Type: hank.TypeString, String: "fs.write"}}}}
+			}
+			path := args[0].String
+			content := args[1].String
 			if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 				return hank.Value{Type: hank.TypeVoid}
 			}
 			return hank.Value{Type: hank.TypeNumber, Number: 1}
 		},
 		"deleteFile": func(args []hank.Value, ctx hank.ExecutionContext) hank.Value {
-			path := hank.ValueToString(args[0])
+			if len(args) == 0 { return hank.Value{Type: hank.TypeVoid} }
+			if args[0].Type != hank.TypeString {
+				return hank.Value{Type: hank.TypeError, Error: &hank.ErrorValue{Code: hank.TypeMismatch, Args: []hank.Value{{Type: hank.TypeString, String: "String"}, {Type: hank.TypeString, String: "Any"}, {Type: hank.TypeString, String: "fs.deleteFile"}}}}
+			}
+			path := args[0].String
 			if err := os.Remove(path); err != nil {
 				return hank.Value{Type: hank.TypeVoid}
 			}
 			return hank.Value{Type: hank.TypeNumber, Number: 1}
 		},
 		"stat": func(args []hank.Value, ctx hank.ExecutionContext) hank.Value {
-			path := hank.ValueToString(args[0])
+			if len(args) == 0 { return hank.Value{Type: hank.TypeVoid} }
+			if args[0].Type != hank.TypeString {
+				return hank.Value{Type: hank.TypeError, Error: &hank.ErrorValue{Code: hank.TypeMismatch, Args: []hank.Value{{Type: hank.TypeString, String: "String"}, {Type: hank.TypeString, String: "Any"}, {Type: hank.TypeString, String: "fs.stat"}}}}
+			}
+			path := args[0].String
 			info, err := os.Stat(path)
 			if err != nil {
 				return hank.Value{Type: hank.TypeVoid}
 			}
-			obj := make(map[string]hank.Value)
-			obj["size"] = hank.Value{Type: hank.TypeNumber, Number: float64(info.Size())}
-			obj["mtime"] = hank.Value{Type: hank.TypeNumber, Number: float64(info.ModTime().UnixMilli())}
+			fields := make(map[string]hank.Value)
+			fields["size"] = hank.Value{Type: hank.TypeNumber, Number: float64(info.Size())}
+			fields["mtime"] = hank.Value{Type: hank.TypeNumber, Number: float64(info.ModTime().UnixMilli())}
 			if info.IsDir() {
-				obj["isDir"] = hank.Value{Type: hank.TypeNumber, Number: 1}
+				fields["isDir"] = hank.Value{Type: hank.TypeNumber, Number: 1}
 			} else {
-				obj["isDir"] = hank.Value{Type: hank.TypeVoid}
+				fields["isDir"] = hank.Value{Type: hank.TypeVoid}
 			}
-			return hank.Value{Type: hank.TypeObject, Object: obj}
+			return hank.Value{Type: hank.TypeMap, Map: fields}
 		},
 	}
 
 	mods["proc"] = map[string]hank.NativeFunc{
 		"run": func(args []hank.Value, ctx hank.ExecutionContext) hank.Value {
-			cmdName := hank.ValueToString(args[0])
+			if len(args) == 0 { return hank.Value{Type: hank.TypeVoid} }
+			if args[0].Type != hank.TypeString {
+				return hank.Value{Type: hank.TypeError, Error: &hank.ErrorValue{Code: hank.TypeMismatch, Args: []hank.Value{{Type: hank.TypeString, String: "String"}, {Type: hank.TypeString, String: "Any"}, {Type: hank.TypeString, String: "proc.run"}}}}
+			}
+			cmdName := args[0].String
 			var cmdArgs []string
 			if len(args) > 1 && args[1].Type == hank.TypeArray {
-				for _, a := range args[1].Array {
+				for _, a := range *args[1].Array {
 					cmdArgs = append(cmdArgs, hank.ValueToString(a))
 				}
 			}
@@ -124,11 +151,11 @@ func (e *SysExtension) GetModules() map[string]map[string]hank.NativeFunc {
 					code = 1
 				}
 			}
-			obj := make(map[string]hank.Value)
-			obj["code"] = hank.Value{Type: hank.TypeNumber, Number: float64(code)}
-			obj["stdout"] = hank.Value{Type: hank.TypeString, String: string(out)}
-			obj["stderr"] = hank.Value{Type: hank.TypeString, String: ""}
-			return hank.Value{Type: hank.TypeObject, Object: obj}
+			fields := make(map[string]hank.Value)
+			fields["code"] = hank.Value{Type: hank.TypeNumber, Number: float64(code)}
+			fields["stdout"] = hank.Value{Type: hank.TypeString, String: string(out)}
+			fields["stderr"] = hank.Value{Type: hank.TypeString, String: ""}
+			return hank.Value{Type: hank.TypeMap, Map: fields}
 		},
 	}
 

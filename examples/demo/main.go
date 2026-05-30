@@ -51,7 +51,14 @@ func createRunner() *hank.Runner {
 	// 1. Instantiate the core Runner
 	r := hank.NewRunner()
 
-	// 2. Register Extensions (Batteries included, but disconnected)
+	// 2. Register Localization
+	r.RegisterLocalization(map[int]string{
+		4001: "Target is not a function: {0}",
+		4007: "Type Mismatch: Expected {0}, got {1} in {2}",
+		4005: "Value exceeds safe integer bounds: {0} in {1}",
+	})
+
+	// 3. Register Extensions (Batteries included, but disconnected)
 	r.RegisterExtension(&hank.StdLib{})
 	r.RegisterExtension(&ext.PlatformExtension{})
 	r.RegisterExtension(&ext.SysExtension{})
@@ -78,6 +85,8 @@ func runConformance(root string) {
 		"test/conformance/15_logic_eq.hank",
 		"test/conformance/16_chained_assign.hank",
 		"test/conformance/17_num_module.hank",
+		"test/conformance/18_runtime_module.hank",
+		"test/conformance/19_error_handling.hank",
 	}
 
 	for _, t := range conformanceTests {
