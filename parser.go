@@ -89,12 +89,22 @@ func (p *Parser) parseStatement() (Expr, error) {
 
 func (p *Parser) parseFlowControl() (Expr, error) {
 	td := p.consume(TokenQuestion)
-	p.consume(TokenLParen)
-	cond, err := p.parseExpression()
-	if err != nil {
-		return nil, err
+	
+	var cond Expr
+	var err error
+	if p.peek().Type == TokenLParen {
+		p.consume(TokenLParen)
+		cond, err = p.parseExpression()
+		if err != nil {
+			return nil, err
+		}
+		p.consume(TokenRParen)
+	} else {
+		cond, err = p.parseExpression()
+		if err != nil {
+			return nil, err
+		}
 	}
-	p.consume(TokenRParen)
 
 	success, err := p.parseBlock()
 	if err != nil {
