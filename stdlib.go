@@ -10,66 +10,19 @@ import (
 	"time"
 )
 
-type StdLib struct{}
+type StdLib struct {
+	EnvState map[string]Value
+}
+
+func NewStdLib() *StdLib {
+	return &StdLib{EnvState: make(map[string]Value)}
+}
 
 func (s *StdLib) Name() string {
 	return "StdLib"
 }
 
 func (s *StdLib) GetTasks() map[string]NativeFunc {
-	return GetStdlibTasks()
-}
-
-func hankEquals(a, b Value) bool {
-	if a.Type != b.Type {
-		return false
-	}
-	switch a.Type {
-	case TypeVoid:
-		return true
-	case TypeNumber:
-		return a.Number == b.Number
-	case TypeString:
-		return a.String == b.String
-	case TypeArray:
-		if len(*a.Array) != len(*b.Array) {
-			return false
-		}
-		for i := range *a.Array {
-			if !hankEquals((*a.Array)[i], (*b.Array)[i]) {
-				return false
-			}
-		}
-		return true
-	case TypeMap:
-		if len(a.Map) != len(b.Map) {
-			return false
-		}
-		for k, v1 := range a.Map {
-			v2, ok := b.Map[k]
-			if !ok || !hankEquals(v1, v2) {
-				return false
-			}
-		}
-		return true
-	case TypeOpaque:
-		return a.Opaque.Label == b.Opaque.Label && a.Opaque.Data == b.Opaque.Data
-	case TypeError:
-		if a.Error.Code != b.Error.Code || len(a.Error.Args) != len(b.Error.Args) {
-			return false
-		}
-		for i := range a.Error.Args {
-			if !hankEquals(a.Error.Args[i], b.Error.Args[i]) {
-				return false
-			}
-		}
-		return true
-	default:
-		return false
-	}
-}
-
-func GetStdlibTasks() map[string]NativeFunc {
 	tasks := make(map[string]NativeFunc)
 
 	// log
@@ -150,13 +103,29 @@ func GetStdlibTasks() map[string]NativeFunc {
 
 	// env
 	tasks["env_get"] = func(args []Value, ctx ExecutionContext) Value {
+		if len(args) == 0 {
+			return Value{Type: TypeVoid}
+		}
+		key := ValueToString(args[0])
+		if val, ok := s.EnvState[key]; ok {
+			return val
+		}
 		return Value{Type: TypeVoid}
 	}
 	tasks["env_set"] = func(args []Value, ctx ExecutionContext) Value {
+		if len(args) < 2 {
+			return Value{Type: TypeVoid}
+		}
+		key := ValueToString(args[0])
+		s.EnvState[key] = args[1]
 		return Value{Type: TypeVoid}
 	}
 	tasks["env_keys"] = func(args []Value, ctx ExecutionContext) Value {
-		return Value{Type: TypeArray, Array: &[]Value{}}
+		keys := make([]Value, 0, len(s.EnvState))
+		for k := range s.EnvState {
+			keys = append(keys, Value{Type: TypeString, String: k})
+		}
+		return Value{Type: TypeArray, Array: &keys}
 	}
 
 	// str
@@ -597,6 +566,55 @@ func GetStdlibTasks() map[string]NativeFunc {
 	}
 
 	return tasks
+}
+
+func hankEquals(a, b Value) bool {
+	if a.Type != b.Type {
+		return false
+	}
+	switch a.Type {
+	case TypeVoid:
+		return true
+	case TypeNumber:
+		return a.Number == b.Number
+	case TypeString:
+		return a.String == b.String
+	case TypeArray:
+		if len(*a.Array) != len(*b.Array) {
+			return false
+		}
+		for i := range *a.Array {
+			if !hankEquals((*a.Array)[i], (*b.Array)[i]) {
+				return false
+			}
+		}
+		return true
+	case TypeMap:
+		if len(a.Map) != len(b.Map) {
+			return false
+		}
+		for k, v1 := range a.Map {
+			v2, ok := b.Map[k]
+			if !ok || !hankEquals(v1, v2) {
+				return false
+			}
+		}
+		return true
+	case TypeOpaque:
+		return a.Opaque.Label == b.Opaque.Label && a.Opaque.Data == b.Opaque.Data
+	case TypeError:
+		if a.Error.Code != b.Error.Code || len(a.Error.Args) != len(b.Error.Args) {
+			return false
+		}
+		for i := range a.Error.Args {
+			if !hankEquals(a.Error.Args[i], b.Error.Args[i]) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
 }
 
 func mapAnyToHank(v interface{}) Value {

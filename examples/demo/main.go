@@ -64,7 +64,7 @@ func createRunner() *hank.Runner {
 	})
 
 	// 3. Register Extensions (Batteries included, but disconnected)
-	r.RegisterExtension(&hank.StdLib{})
+	r.RegisterExtension(hank.NewStdLib())
 	r.RegisterExtension(&ext.PlatformExtension{})
 	r.RegisterExtension(&ext.SysExtension{})
 
