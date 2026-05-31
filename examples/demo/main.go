@@ -61,6 +61,7 @@ func createRunner() *hank.Runner {
 		4001: "Target is not a function: {0}",
 		4007: "Type Mismatch: Expected {0}, got {1} in {2}",
 		4005: "Value exceeds safe integer bounds: {0} in {1}",
+		4008: "Instruction Limit Exceeded: Script reached the maximum allowed AST evaluations ({0})",
 	})
 
 	// 3. Register Extensions (Batteries included, but disconnected)
@@ -92,11 +93,17 @@ func runConformance(root string) {
 		"test/conformance/17_num_module.hank",
 		"test/conformance/18_runtime_module.hank",
 		"test/conformance/19_error_handling.hank",
+		"test/conformance/20_grammar_hardening.hank",
+		"test/conformance/21_data_functional.hank",
+		"test/conformance/22_instruction_limit.hank",
 	}
 
 	for _, t := range conformanceTests {
 		fmt.Printf("--- Running: %s ---\n", t)
 		r := createRunner()
+		if strings.Contains(t, "22_instruction_limit") {
+			r.MaxInstructions = 1000
+		}
 		path, _ := filepath.Abs(filepath.Join(root, t))
 		res := NewFileResource(path)
 		args := []hank.Value{}

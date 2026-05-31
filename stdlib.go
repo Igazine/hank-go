@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -314,6 +315,23 @@ func (s *StdLib) GetTasks() map[string]NativeFunc {
 		}
 		return Value{Type: TypeNumber, Number: args[0].Number / args[1].Number}
 	}
+	tasks["math_mod"] = func(args []Value, ctx ExecutionContext) Value {
+		if len(args) < 2 {
+			return Value{Type: TypeVoid}
+		}
+		if args[0].Type != TypeNumber {
+			return Value{Type: TypeError, Error: &ErrorValue{Code: TypeMismatch, Args: []Value{{Type: TypeString, String: "Number"}, {Type: TypeString, String: typeToString(args[0].Type)}, {Type: TypeString, String: "math_mod"}}}}
+		}
+		if args[1].Type != TypeNumber {
+			return Value{Type: TypeError, Error: &ErrorValue{Code: TypeMismatch, Args: []Value{{Type: TypeString, String: "Number"}, {Type: TypeString, String: typeToString(args[1].Type)}, {Type: TypeString, String: "math_mod"}}}}
+		}
+		if args[1].Number == 0 {
+			return Value{Type: TypeVoid}
+		}
+		// Go's % operator only works with integers, so use math.Mod or manual calculation
+		// but we are in a simple package here.
+		return Value{Type: TypeNumber, Number: float64(int64(args[0].Number) % int64(args[1].Number))}
+	}
 	tasks["math_gt"] = func(args []Value, ctx ExecutionContext) Value {
 		if len(args) < 2 {
 			return Value{Type: TypeVoid}
@@ -386,6 +404,56 @@ func (s *StdLib) GetTasks() map[string]NativeFunc {
 		return Value{Type: TypeVoid}
 	}
 
+	// type
+	tasks["type_isVoid"] = func(args []Value, ctx ExecutionContext) Value {
+		if len(args) > 0 && args[0].Type == TypeVoid {
+			return Value{Type: TypeNumber, Number: 1}
+		}
+		return Value{Type: TypeVoid}
+	}
+	tasks["type_isNumber"] = func(args []Value, ctx ExecutionContext) Value {
+		if len(args) > 0 && args[0].Type == TypeNumber {
+			return Value{Type: TypeNumber, Number: 1}
+		}
+		return Value{Type: TypeVoid}
+	}
+	tasks["type_isString"] = func(args []Value, ctx ExecutionContext) Value {
+		if len(args) > 0 && args[0].Type == TypeString {
+			return Value{Type: TypeNumber, Number: 1}
+		}
+		return Value{Type: TypeVoid}
+	}
+	tasks["type_isArray"] = func(args []Value, ctx ExecutionContext) Value {
+		if len(args) > 0 && args[0].Type == TypeArray {
+			return Value{Type: TypeNumber, Number: 1}
+		}
+		return Value{Type: TypeVoid}
+	}
+	tasks["type_isMap"] = func(args []Value, ctx ExecutionContext) Value {
+		if len(args) > 0 && args[0].Type == TypeMap {
+			return Value{Type: TypeNumber, Number: 1}
+		}
+		return Value{Type: TypeVoid}
+	}
+	tasks["type_isOpaque"] = func(args []Value, ctx ExecutionContext) Value {
+		if len(args) > 0 && args[0].Type == TypeOpaque {
+			return Value{Type: TypeNumber, Number: 1}
+		}
+		return Value{Type: TypeVoid}
+	}
+	tasks["type_isTask"] = func(args []Value, ctx ExecutionContext) Value {
+		if len(args) > 0 && args[0].Type == TypeTask {
+			return Value{Type: TypeNumber, Number: 1}
+		}
+		return Value{Type: TypeVoid}
+	}
+	tasks["type_isError"] = func(args []Value, ctx ExecutionContext) Value {
+		if len(args) > 0 && args[0].Type == TypeError {
+			return Value{Type: TypeNumber, Number: 1}
+		}
+		return Value{Type: TypeVoid}
+	}
+
 	// arr
 	tasks["arr_length"] = func(args []Value, ctx ExecutionContext) Value {
 		if len(args) == 0 {
@@ -437,6 +505,168 @@ func (s *StdLib) GetTasks() map[string]NativeFunc {
 		*args[0].Array = (*args[0].Array)[:idx]
 		return val
 	}
+	tasks["arr_shift"] = func(args []Value, ctx ExecutionContext) Value {
+		if len(args) == 0 || args[0].Type != TypeArray {
+			return Value{Type: TypeVoid}
+		}
+		arr := args[0].Array
+		if len(*arr) == 0 {
+			return Value{Type: TypeVoid}
+		}
+		val := (*arr)[0]
+		*arr = (*arr)[1:]
+		return val
+	}
+	tasks["arr_unshift"] = func(args []Value, ctx ExecutionContext) Value {
+		if len(args) < 2 || args[0].Type != TypeArray {
+			return Value{Type: TypeVoid}
+		}
+		arr := args[0].Array
+		*arr = append([]Value{args[1]}, *arr...)
+		return Value{Type: TypeVoid}
+	}
+	tasks["arr_concat"] = func(args []Value, ctx ExecutionContext) Value {
+		res := new([]Value)
+		for _, arg := range args {
+			if arg.Type == TypeArray {
+				*res = append(*res, *arg.Array...)
+			} else {
+				*res = append(*res, arg)
+			}
+		}
+		return Value{Type: TypeArray, Array: res}
+	}
+	tasks["arr_join"] = func(args []Value, ctx ExecutionContext) Value {
+		if len(args) == 0 || args[0].Type != TypeArray {
+			return Value{Type: TypeVoid}
+		}
+		sep := ""
+		if len(args) > 1 {
+			sep = ValueToString(args[1])
+		}
+		var parts []string
+		for _, item := range *args[0].Array {
+			parts = append(parts, ValueToString(item))
+		}
+		return Value{Type: TypeString, String: strings.Join(parts, sep)}
+	}
+	tasks["arr_empty"] = func(args []Value, ctx ExecutionContext) Value {
+		if len(args) > 0 && args[0].Type == TypeArray && len(*args[0].Array) == 0 {
+			return Value{Type: TypeNumber, Number: 1}
+		}
+		return Value{Type: TypeVoid}
+	}
+	tasks["arr_reverse"] = func(args []Value, ctx ExecutionContext) Value {
+		if len(args) == 0 || args[0].Type != TypeArray {
+			return Value{Type: TypeVoid}
+		}
+		orig := *args[0].Array
+		res := make([]Value, len(orig))
+		for i, j := 0, len(orig)-1; j >= 0; i, j = i+1, j-1 {
+			res[i] = orig[j]
+		}
+		return Value{Type: TypeArray, Array: &res}
+	}
+	tasks["arr_slice"] = func(args []Value, ctx ExecutionContext) Value {
+		if len(args) == 0 || args[0].Type != TypeArray {
+			return Value{Type: TypeVoid}
+		}
+		orig := *args[0].Array
+		start := 0
+		if len(args) > 1 && args[1].Type == TypeNumber {
+			start = int(args[1].Number)
+		}
+		end := len(orig)
+		if len(args) > 2 && args[2].Type == TypeNumber {
+			end = int(args[2].Number)
+		}
+
+		if start < 0 {
+			start = len(orig) + start
+		}
+		if start < 0 {
+			start = 0
+		}
+		if end < 0 {
+			end = len(orig) + end
+		}
+		if end > len(orig) {
+			end = len(orig)
+		}
+		if start >= end {
+			res := make([]Value, 0)
+			return Value{Type: TypeArray, Array: &res}
+		}
+
+		res := make([]Value, end-start)
+		copy(res, orig[start:end])
+		return Value{Type: TypeArray, Array: &res}
+	}
+	tasks["arr_sort"] = func(args []Value, ctx ExecutionContext) Value {
+		if len(args) == 0 || args[0].Type != TypeArray {
+			return Value{Type: TypeVoid}
+		}
+		arr := *args[0].Array
+		if len(args) > 1 && args[1].Type == TypeTask {
+			// Bubblesort for simplicity in native bridge if no Sort interface is easy
+			// Better: use sort.Slice
+			sort.Slice(arr, func(i, j int) bool {
+				res := ctx.Call(args[1], []Value{arr[i], arr[j]})
+				if res.Type == TypeNumber {
+					return res.Number < 0
+				}
+				return false
+			})
+		} else {
+			sort.Slice(arr, func(i, j int) bool {
+				return ValueToString(arr[i]) < ValueToString(arr[j])
+			})
+		}
+		return Value{Type: TypeVoid}
+	}
+	tasks["arr_indexof"] = func(args []Value, ctx ExecutionContext) Value {
+		if len(args) < 2 || args[0].Type != TypeArray {
+			return Value{Type: TypeVoid}
+		}
+		for idx, item := range *args[0].Array {
+			if hankEquals(item, args[1]) {
+				return Value{Type: TypeNumber, Number: float64(idx)}
+			}
+		}
+		return Value{Type: TypeVoid}
+	}
+	tasks["arr_map"] = func(args []Value, ctx ExecutionContext) Value {
+		if len(args) < 2 || args[0].Type != TypeArray {
+			return Value{Type: TypeVoid}
+		}
+		orig := *args[0].Array
+		res := make([]Value, len(orig))
+		for idx, item := range orig {
+			val := ctx.Call(args[1], []Value{item, {Type: TypeNumber, Number: float64(idx)}})
+			if ctx.IsError(val) {
+				return val
+			}
+			res[idx] = val
+		}
+		return Value{Type: TypeArray, Array: &res}
+	}
+	tasks["arr_filter"] = func(args []Value, ctx ExecutionContext) Value {
+		if len(args) < 2 || args[0].Type != TypeArray {
+			return Value{Type: TypeVoid}
+		}
+		orig := *args[0].Array
+		res := make([]Value, 0)
+		for idx, item := range orig {
+			val := ctx.Call(args[1], []Value{item, {Type: TypeNumber, Number: float64(idx)}})
+			if ctx.IsError(val) {
+				return val
+			}
+			if val.Type != TypeVoid {
+				res = append(res, item)
+			}
+		}
+		return Value{Type: TypeArray, Array: &res}
+	}
 	tasks["arr_each"] = func(args []Value, ctx ExecutionContext) Value {
 		if len(args) < 2 {
 			return Value{Type: TypeVoid}
@@ -481,6 +711,17 @@ func (s *StdLib) GetTasks() map[string]NativeFunc {
 		}
 		key := ValueToString(args[1])
 		args[0].Map[key] = args[2]
+		return Value{Type: TypeVoid}
+	}
+	tasks["map_remove"] = func(args []Value, ctx ExecutionContext) Value {
+		if len(args) < 2 || args[0].Type != TypeMap {
+			return Value{Type: TypeVoid}
+		}
+		key := ValueToString(args[1])
+		if _, ok := args[0].Map[key]; ok {
+			delete(args[0].Map, key)
+			return Value{Type: TypeNumber, Number: 1}
+		}
 		return Value{Type: TypeVoid}
 	}
 	tasks["map_keys"] = func(args []Value, ctx ExecutionContext) Value {
@@ -557,12 +798,6 @@ func (s *StdLib) GetTasks() map[string]NativeFunc {
 			return Value{Type: TypeError, Error: &ErrorValue{Code: TypeMismatch, Args: []Value{{Type: TypeString, String: "Error"}, {Type: TypeString, String: typeToString(args[0].Type)}, {Type: TypeString, String: "err_args"}}}}
 		}
 		return Value{Type: TypeArray, Array: &args[0].Error.Args}
-	}
-	tasks["err_isError"] = func(args []Value, ctx ExecutionContext) Value {
-		if len(args) > 0 && args[0].Type == TypeError {
-			return Value{Type: TypeNumber, Number: 1}
-		}
-		return Value{Type: TypeVoid}
 	}
 
 	return tasks

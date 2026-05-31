@@ -19,15 +19,17 @@ type EvalResult struct {
 }
 
 type Interpreter struct {
-	globalScope  Scope
-	coreScope    Scope
-	localization map[int]string
-	depth        int
+	globalScope      Scope
+	coreScope        Scope
+	localization     map[int]string
+	depth            int
+	maxInstructions  int
+	instructionCount int
 }
 
 const MaxDepth = 500
 
-func NewInterpreter(parentScope Scope, coreScope Scope, localization map[int]string) *Interpreter {
+func NewInterpreter(parentScope Scope, coreScope Scope, localization map[int]string, maxInstructions int) *Interpreter {
 	if coreScope == nil {
 		coreScope = NewScope(nil)
 	}
@@ -38,9 +40,10 @@ func NewInterpreter(parentScope Scope, coreScope Scope, localization map[int]str
 		localization = make(map[int]string)
 	}
 	return &Interpreter{
-		globalScope:  parentScope,
-		coreScope:    coreScope,
-		localization: localization,
+		globalScope:     parentScope,
+		coreScope:       coreScope,
+		localization:    localization,
+		maxInstructions: maxInstructions,
 	}
 }
 
@@ -81,6 +84,13 @@ func (i *Interpreter) GetLocalization() map[int]string {
 func (i *Interpreter) evalInScope(expr Expr, scope Scope) EvalResult {
 	if expr == nil {
 		return EvalResult{Type: ResultValue, Value: Value{Type: TypeVoid}}
+	}
+
+	if i.maxInstructions > 0 {
+		i.instructionCount++
+		if i.instructionCount > i.maxInstructions {
+			return EvalResult{Type: ResultError, Value: Value{Type: TypeError, Error: &ErrorValue{Code: InstructionLimitExceeded, Args: []Value{{Type: TypeNumber, Number: float64(i.maxInstructions)}}}}}
+		}
 	}
 
 	switch e := expr.(type) {

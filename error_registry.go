@@ -26,6 +26,7 @@ var HankErrorMessages = map[HankError]string{
 	BitwiseOutOfBounds:            "Value exceeds safe integer bounds for bitwise operation: %v",
 	GenericRuntimeError:           "%v",
 	TypeMismatch:                  "Type Mismatch: Expected %v, got %v in %v",
+	InstructionLimitExceeded:      "Instruction Limit Exceeded: Script reached the maximum allowed AST evaluations ({0})",
 }
 
 func CreateHankError(code HankError, args []interface{}, filename string, line int, col int, lineText string) *HankErrorValue {

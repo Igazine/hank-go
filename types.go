@@ -109,6 +109,7 @@ const (
 	BitwiseOutOfBounds       HankError = 4005
 	GenericRuntimeError      HankError = 4006
 	TypeMismatch             HankError = 4007
+	InstructionLimitExceeded HankError = 4008
 )
 
 type ErrorValue struct {

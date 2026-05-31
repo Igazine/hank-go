@@ -6,9 +6,10 @@ package hank
  * Platform-agnostic: uses the Resource model for all content retrieval.
  */
 type Runner struct {
-	resourceCache map[string]Resource
-	coreScope     Scope
-	localization  map[int]string
+	resourceCache   map[string]Resource
+	coreScope       Scope
+	localization    map[int]string
+	MaxInstructions int
 }
 
 func NewRunner() *Runner {
@@ -113,7 +114,7 @@ func (r *Runner) Run(resource Resource, args []Value) (Value, error) {
 		return Value{Type: TypeVoid}, err
 	}
 
-	interp := NewInterpreter(nil, r.coreScope, r.localization)
+	interp := NewInterpreter(nil, r.coreScope, r.localization, r.MaxInstructions)
 	scriptTask, err := interp.Run(ast)
 	if err != nil {
 		return Value{Type: TypeVoid}, err
